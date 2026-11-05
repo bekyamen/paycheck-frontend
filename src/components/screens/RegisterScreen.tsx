@@ -1,4 +1,3 @@
-
 "use client";
 import { useState } from "react";
 import PinInput from "@/components/ui/PinInput";
@@ -12,6 +11,9 @@ interface RegisterScreenProps {
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
+// Must match the backend's Zod regex
+const PHONE_REGEX = /^(?:\+251|0)?[97]\d{8}$/;
+
 export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: RegisterScreenProps) {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -23,10 +25,15 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
 
   function validate() {
     const e: Record<string, string> = {};
+    const cleanPhone = phone.replace(/\s/g, "");
+
     if (!fullName.trim()) e.fullName = "Full name is required";
-    if (!/^\+?[0-9]{9,15}$/.test(phone.replace(/\s/g, ""))) e.phone = "Enter a valid phone number";
-    if (pin.length < 4) e.pin = "PIN must be 4 digits";
+    if (!PHONE_REGEX.test(cleanPhone)) {
+      e.phone = "Enter a valid Ethiopian number, e.g. +251912345678";
+    }
+    if (!/^\d{4}$/.test(pin)) e.pin = "PIN must be 4 digits";
     if (pin !== confirmPin) e.confirmPin = "PINs do not match";
+
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -39,7 +46,12 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
     }
     setLoading(true);
     try {
-      const res = await register({ fullName: fullName.trim(), phone: phone.trim(), pinCode: pin, accountType });
+      const res = await register({
+        fullName: fullName.trim(),
+        phone: phone.replace(/\s/g, ""),
+        pinCode: pin,
+        accountType,
+      });
       haptic("success");
       showToast("Account created! Welcome 🎉", "success");
       onSuccess(res.token, res.user);
@@ -61,7 +73,10 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
       </div>
 
       <div className="screen-content">
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}
+        >
           {/* Full Name */}
           <div className="form-group">
             <label className="form-label" htmlFor="reg-fullname">Full Name</label>
