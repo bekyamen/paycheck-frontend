@@ -17,7 +17,17 @@ interface AccountsScreenProps {
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-const BANKS = ["CBE", "Awash", "Dashen", "Abyssinia", "Wegagen", "Zemen", "Nib", "United", "Oromia", "Berhan", "Other"];
+// value = what the backend accepts, label = what the user sees.
+// Add more here only if they exist in your Prisma enum.
+const BANKS = [
+  { value: "CBE", label: "CBE" },
+  { value: "TELEBIRR", label: "Telebirr" },
+  { value: "BOA", label: "Bank of Abyssinia" },
+  { value: "AWASH", label: "Awash" },
+];
+
+const bankLabel = (value: string) =>
+  BANKS.find((b) => b.value === value)?.label ?? value;
 
 type ModalState =
   | { type: "delete"; account: BankAccount }
@@ -57,8 +67,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
 
   // Group by bank
   const grouped = accounts.reduce<Record<string, BankAccount[]>>((acc, a) => {
-    if (!acc[a.bank]) acc[a.bank] = [];
-    acc[a.bank].push(a);
+    (acc[a.bankName] ??= []).push(a);
     return acc;
   }, {});
 
@@ -70,7 +79,11 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
     }
     setAddLoading(true);
     try {
-      const created = await addAccount({ bankName: addBank, accountNumber: addNumber.trim(), accountHolderName: addHolder.trim() });
+      const created = await addAccount({
+        bankName: addBank,
+        accountNumber: addNumber.trim(),
+        accountHolderName: addHolder.trim(),
+      });
       haptic("success");
       setAccounts((prev) => [...prev, created]);
       setAddNumber("");
@@ -151,8 +164,16 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
 
               <div className="form-group">
                 <label className="form-label" htmlFor="add-bank">Bank</label>
-                <select id="add-bank" className="form-input form-select" value={addBank} onChange={(e) => setAddBank(e.target.value)}>
-                  {BANKS.map((b) => <option key={b} value={b}>{b}</option>)}
+                <select
+                  id="add-bank"
+                  className="form-input form-select"
+                  value={addBank}
+                  onChange={(e) => setAddBank(e.target.value)}
+                  disabled={addLoading}
+                >
+                  {BANKS.map((b) => (
+                    <option key={b.value} value={b.value}>{b.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -198,12 +219,12 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
             <div style={{ textAlign: "center", paddingTop: "64px" }}>
               <p style={{ fontSize: "40px", marginBottom: "12px" }}>🏦</p>
               <p style={{ fontWeight: 600 }}>No accounts yet</p>
-              {isManager && <p className="text-muted text-sm" style={{ marginTop: "6px" }}>Tap "+ Add" to add one</p>}
+              {isManager && <p className="text-muted text-sm" style={{ marginTop: "6px" }}>Tap &quot;+ Add&quot; to add one</p>}
             </div>
           ) : (
             Object.entries(grouped).map(([bank, accs]) => (
               <div key={bank} style={{ marginBottom: "20px" }}>
-                <p className="section-label">{bank}</p>
+                <p className="section-label">{bankLabel(bank)}</p>
                 {accs.map((account) => (
                   <AccountCard
                     key={account.id}
@@ -224,7 +245,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
       {modal?.type === "delete" && (
         <ConfirmSheet
           title="Delete Account"
-          message={`Remove "${modal.account.accountHolderName}" (${modal.account.bankName}) permanently? This cannot be undone.`}
+          message={`Remove "${modal.account.accountHolderName}" (${bankLabel(modal.account.bankName)}) permanently? This cannot be undone.`}
           confirmLabel="Delete"
           danger
           onConfirm={handleDelete}
