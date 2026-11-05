@@ -16,7 +16,7 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
-  const [accountType, setAccountType] = useState("individual");
+  const [accountType, setAccountType] = useState("PERSONAL");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -103,8 +103,8 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
               onChange={(e) => setAccountType(e.target.value)}
               disabled={loading}
             >
-              <option value="individual">Individual</option>
-              <option value="business">Business</option>
+              <option value="PERSONAL">Individual / Personal</option>
+              <option value="BUSINESS">Business</option>
             </select>
           </div>
 
