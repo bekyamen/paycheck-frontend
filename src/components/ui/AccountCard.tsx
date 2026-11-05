@@ -5,7 +5,7 @@ import { haptic } from "@/lib/telegram";
 interface AccountCardProps {
   account: BankAccount;
   isManager: boolean;
-  onToggle: (id: string) => void;
+  onToggle: (account: BankAccount) => void;
   onEdit: (account: BankAccount) => void;
   onDelete: (account: BankAccount) => void;
 }
@@ -17,7 +17,7 @@ export default function AccountCard({
   onEdit,
   onDelete,
 }: AccountCardProps) {
-  const { id, bank, accountNumber, holderName, isActive } = account;
+  const { id, bankName, accountNumber, accountHolderName, isActive } = account;
 
   // Format account number with spaces every 4 chars
   const formatted = accountNumber.replace(/(.{4})/g, "$1 ").trim();
@@ -29,9 +29,9 @@ export default function AccountCard({
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <p className="bank-name">{bank}</p>
+          <p className="bank-name">{bankName}</p>
           <p className="account-number">{formatted}</p>
-          <p className="holder-name">{holderName}</p>
+          <p className="holder-name">{accountHolderName}</p>
         </div>
         <span className={`badge ${isActive ? "badge-success" : "badge-inactive"}`}>
           {isActive ? "Active" : "Inactive"}
@@ -44,7 +44,7 @@ export default function AccountCard({
             className={`action-btn toggle-btn ${isActive ? "active-btn" : "inactive-btn"}`}
             onClick={() => {
               haptic("light");
-              onToggle(id);
+              onToggle(account);
             }}
             aria-label={isActive ? "Deactivate account" : "Activate account"}
           >

@@ -70,7 +70,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
     }
     setAddLoading(true);
     try {
-      const created = await addAccount({ bank: addBank, accountNumber: addNumber.trim(), holderName: addHolder.trim() });
+      const created = await addAccount({ bankName: addBank, accountNumber: addNumber.trim(), accountHolderName: addHolder.trim() });
       haptic("success");
       setAccounts((prev) => [...prev, created]);
       setAddNumber("");
@@ -85,9 +85,9 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
     }
   }
 
-  async function handleToggle(id: string) {
+  async function handleToggle(id: string, isActive: boolean) {
     try {
-      const updated = await toggleAccount(id);
+      const updated = await toggleAccount(id, isActive);
       setAccounts((prev) => prev.map((a) => (a.id === id ? updated : a)));
       showToast(updated.isActive ? "Account activated" : "Account deactivated", "info");
     } catch {
@@ -209,8 +209,8 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
                     key={account.id}
                     account={account}
                     isManager={isManager}
-                    onToggle={handleToggle}
-                    onEdit={(a) => { setEditHolder(a.holderName); setModal({ type: "edit", account: a }); }}
+                    onToggle={(a) => handleToggle(a.id, a.isActive)}
+                    onEdit={(a) => { setEditHolder(a.accountHolderName); setModal({ type: "edit", account: a }); }}
                     onDelete={(a) => setModal({ type: "delete", account: a })}
                   />
                 ))}
@@ -224,7 +224,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
       {modal?.type === "delete" && (
         <ConfirmSheet
           title="Delete Account"
-          message={`Remove "${modal.account.holderName}" (${modal.account.bank}) permanently? This cannot be undone.`}
+          message={`Remove "${modal.account.accountHolderName}" (${modal.account.bankName}) permanently? This cannot be undone.`}
           confirmLabel="Delete"
           danger
           onConfirm={handleDelete}

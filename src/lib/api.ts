@@ -83,37 +83,46 @@ export function login(phone: string, pinCode: string): Promise<{ token: string; 
 }
 
 // ── Accounts ──────────────────────────────────────────────────────────────────
+// Backend field names: bankName, accountHolderName (match Prisma BankSettlementAccount model)
 export interface BankAccount {
   id: string;
-  bank: string;
+  bankName: string;
   accountNumber: string;
-  holderName: string;
+  accountHolderName: string;
   isActive: boolean;
   createdAt: string;
 }
 
-export function getAccounts(): Promise<BankAccount[]> {
-  return request("GET", "/api/settings/accounts");
+// Backend returns { accounts: [...] } — unwrap it
+export async function getAccounts(): Promise<BankAccount[]> {
+  const data = await request<{ accounts: BankAccount[] }>("GET", "/api/settings/accounts");
+  return Array.isArray(data.accounts) ? data.accounts : [];
 }
 
 export interface AddAccountPayload {
-  bank: string;
+  bankName: string;
   accountNumber: string;
-  holderName: string;
+  accountHolderName: string;
 }
 
-export function addAccount(payload: AddAccountPayload): Promise<BankAccount> {
-  return request("POST", "/api/settings/accounts", payload);
+// Backend returns { account: {...} } — unwrap it
+export async function addAccount(payload: AddAccountPayload): Promise<BankAccount> {
+  const data = await request<{ account: BankAccount }>("POST", "/api/settings/accounts", payload);
+  return data.account;
 }
 
-export function updateAccount(id: string, holderName: string): Promise<BankAccount> {
-  return request("PATCH", `/api/settings/accounts/${id}`, { holderName });
+// Backend returns { account: {...} } — unwrap it
+export async function updateAccount(id: string, accountHolderName: string): Promise<BankAccount> {
+  const data = await request<{ account: BankAccount }>("PATCH", `/api/settings/accounts/${id}`, { accountHolderName });
+  return data.account;
 }
 
 export function deleteAccount(id: string): Promise<void> {
   return request("DELETE", `/api/settings/accounts/${id}`);
 }
 
-export function toggleAccount(id: string): Promise<BankAccount> {
-  return request("PATCH", `/api/settings/accounts/${id}/toggle`);
+// Backend toggle reads `isActive` from body — pass the new desired value
+export async function toggleAccount(id: string, currentIsActive: boolean): Promise<BankAccount> {
+  const data = await request<{ account: BankAccount }>("PATCH", `/api/settings/accounts/${id}/toggle`, { isActive: !currentIsActive });
+  return data.account;
 }
