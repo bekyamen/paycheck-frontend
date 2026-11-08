@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { miniappAuth, getMe, type UserProfile } from "@/lib/api";
+import { miniappAuth, getMe, logout as apiLogout, type UserProfile } from "@/lib/api";
 import { getInitData } from "@/lib/telegram";
 
 export type AuthScreen = "loading" | "register" | "login" | "app";
@@ -12,12 +12,21 @@ export function useAuth() {
   const [error, setError] = useState<string | null>(null);
 
   const saveToken = useCallback((t: string) => {
-    localStorage.setItem("cf_token", t);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cf_token", t);
+    }
     setToken(t);
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem("cf_token");
+  const logout = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch {
+      // Ignore network errors on logout
+    }
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("cf_token");
+    }
     setToken(null);
     setUser(null);
     setScreen("login");
@@ -25,15 +34,24 @@ export function useAuth() {
 
   const loadUser = useCallback(async () => {
     try {
-      const profile = await getMe();
-      setUser(profile);
-      setScreen("app");
+      const data = await getMe();
+      if (data?.user) {
+        setUser(data.user);
+        setScreen("app");
+      } else {
+        throw new Error("No user profile returned");
+      }
     } catch {
-      logout();
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("cf_token");
+      }
+      setToken(null);
+      setUser(null);
+      setScreen("login");
     }
-  }, [logout]);
+  }, []);
 
-  // Boot: try Telegram initData first, then fall back to stored token
+  // Boot sequence: Check Telegram initData or stored token
   useEffect(() => {
     async function boot() {
       setScreen("loading");
@@ -48,27 +66,24 @@ export function useAuth() {
             setScreen("register");
             return;
           }
-          if (res.needsLink) {
-            setScreen("login");
-            return;
-          }
           if (res.token) {
             saveToken(res.token);
             if (res.user) {
               setUser(res.user);
               setScreen("app");
+              return;
             } else {
               await loadUser();
+              return;
             }
-            return;
           }
         } catch (e: unknown) {
-          console.warn("Telegram auth failed, falling back to stored token:", e);
+          console.warn("Telegram auth failed, falling back to local storage:", e);
         }
       }
 
-      // Fall back to stored token
-      const stored = localStorage.getItem("cf_token");
+      // Check stored token
+      const stored = typeof window !== "undefined" ? localStorage.getItem("cf_token") : null;
       if (stored) {
         setToken(stored);
         await loadUser();
@@ -77,8 +92,9 @@ export function useAuth() {
 
       setScreen("login");
     }
+
     boot();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadUser, saveToken]);
 
   return { screen, setScreen, user, setUser, token, saveToken, logout, loadUser, error, setError };
 }
