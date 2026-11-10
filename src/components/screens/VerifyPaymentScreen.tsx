@@ -126,8 +126,6 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
             setIsScannerOpen(false);
           }}
           showToast={showToast}
-          initialProvider={provider}
-          onProviderChange={(p) => setProvider(p)}
         />
       )}
 
@@ -241,38 +239,8 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                 Live Receipt Scanner
               </h2>
               <p className="text-muted text-xs" style={{ marginTop: "6px", maxWidth: "280px" }}>
-                Point your phone camera at a printed receipt or customer screen to verify CBE & Telebirr transactions in seconds.
+                Point your phone camera at any CBE or Telebirr receipt to verify automatically in seconds.
               </p>
-            </div>
-
-            {/* Provider Selection for Live Camera */}
-            <div className="form-group" style={{ width: "100%", textAlign: "left", margin: 0 }}>
-              <label className="form-label" style={{ fontSize: "12px", marginBottom: "6px" }}>Bank / Provider</label>
-              <div style={{ display: "flex", gap: "10px" }}>
-                {["CBE", "TELEBIRR"].map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => {
-                      haptic("selection");
-                      setProvider(p);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: "10px",
-                      borderRadius: "var(--radius-sm)",
-                      border: provider === p ? "2px solid var(--tg-theme-button-color, #0a84ff)" : "1px solid var(--glass-border)",
-                      background: provider === p ? "rgba(10, 132, 255, 0.15)" : "rgba(255, 255, 255, 0.05)",
-                      color: provider === p ? "var(--tg-theme-button-color, #0a84ff)" : "inherit",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontSize: "13px",
-                    }}
-                  >
-                    {p === "CBE" ? "🏦 CBE Bank" : "📱 Telebirr"}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <button
@@ -295,7 +263,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                 boxShadow: "0 4px 16px rgba(10, 132, 255, 0.35)",
               }}
             >
-              <span>📷</span> Open Camera Scanner ({provider === "CBE" ? "CBE" : "Telebirr"})
+              <span>📷</span> Open Camera Scanner
             </button>
 
             <p className="text-muted" style={{ fontSize: "11px", margin: 0 }}>
@@ -518,7 +486,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
               >
                 <span style={{ fontSize: "16px" }}>💡</span>
                 <span style={{ fontSize: "12px", color: "#ffd60a", fontWeight: 500 }}>
-                  <strong>Tip:</strong> Hold steady, use good light, and fill the frame.
+                  <strong>Tip:</strong> Hold steady, use good light, and keep receipt clear.
                 </span>
               </div>
             )}
