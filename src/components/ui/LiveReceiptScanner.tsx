@@ -18,7 +18,7 @@ interface LiveReceiptScannerProps {
 }
 
 type ScannerStep = "camera" | "preview" | "verifying";
-type FrameShape = "tall" | "screenshot";
+type FrameShape = "screenshot" | "tall" | "wide";
 type QualityState = "idle" | "dark" | "moving" | "blurry" | "sharp";
 type VerifyStage = "reading" | "checking_bank" | "done";
 type CameraFallbackReason = "denied" | "unavailable" | "unsupported" | null;
@@ -37,9 +37,40 @@ interface ExtendedConstraintSet extends MediaTrackConstraintSet {
   pointsOfInterest?: Array<{ x: number; y: number }>;
 }
 
+interface BoxDims {
+  width: number;
+  height: number;
+}
+
 const STORAGE_SHAPE_KEY = "cf_scanner_frame_shape";
 const STORAGE_AUTO_KEY = "cf_scanner_auto_capture";
 const DEFAULT_TIP = "Make sure the receipt is flat, well lit and all text is clear.";
+
+function parseSavedShape(): FrameShape {
+  if (typeof window === "undefined") return "screenshot";
+  const saved = localStorage.getItem(STORAGE_SHAPE_KEY);
+  if (saved === "tall" || saved === "wide" || saved === "screenshot") return saved;
+  return "screenshot";
+}
+
+function getTargetAspect(shape: FrameShape): number {
+  if (shape === "tall") return 1 / 2.25; // ~1:2.25 narrow tall paper receipt
+  if (shape === "wide") return 4 / 3;    // 4:3 small slip / landscape document
+  return 9 / 19;                         // ~9:19 modern phone screenshot (default)
+}
+
+function fitAspectBox(maxW: number, maxH: number, ratio: number): BoxDims {
+  const safeW = Math.max(120, maxW);
+  const safeH = Math.max(120, maxH);
+  if (safeW / safeH > ratio) {
+    const height = Math.floor(safeH);
+    const width = Math.max(90, Math.floor(height * ratio));
+    return { width, height };
+  }
+  const width = Math.floor(safeW);
+  const height = Math.max(90, Math.floor(width / ratio));
+  return { width, height };
+}
 
 export default function LiveReceiptScanner({
   onClose,
@@ -52,14 +83,17 @@ export default function LiveReceiptScanner({
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [provider, setProvider] = useState<string>(initialProvider);
 
-  const [frameShape, setFrameShape] = useState<FrameShape>(() => {
-    if (typeof window === "undefined") return "tall";
-    return localStorage.getItem(STORAGE_SHAPE_KEY) === "screenshot" ? "screenshot" : "tall";
-  });
+  const [frameShape, setFrameShape] = useState<FrameShape>(parseSavedShape);
   const [autoCapture, setAutoCapture] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(STORAGE_AUTO_KEY) === "1";
   });
+
+  // Dynamically computed layout dimensions so frame fills available space with 0 overlap
+  const [stageBounds, setStageBounds] = useState<{ top: number; bottom: number }>({ top: 64, bottom: 132 });
+  const [frameDims, setFrameDims] = useState<BoxDims>({ width: 310, height: 640 });
+  const [previewBounds, setPreviewBounds] = useState<{ top: number; bottom: number }>({ top: 64, bottom: 90 });
+  const [previewDims, setPreviewDims] = useState<BoxDims>({ width: 320, height: 660 });
 
   // Camera capabilities & live status
   const [isStarting, setIsStarting] = useState<boolean>(true);
@@ -90,7 +124,12 @@ export default function LiveReceiptScanner({
   const [verifying, setVerifying] = useState<boolean>(false);
   const [verifyStage, setVerifyStage] = useState<VerifyStage>("reading");
 
-  // Mutable refs for fast frame loops & safe lifecycle cleanup
+  // Layout & media refs
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const topBarRef = useRef<HTMLDivElement | null>(null);
+  const bottomHudRef = useRef<HTMLDivElement | null>(null);
+  const previewTopRef = useRef<HTMLDivElement | null>(null);
+  const previewDockRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -103,6 +142,7 @@ export default function LiveReceiptScanner({
   const attemptIdRef = useRef<number>(0);
   const previewUrlRef = useRef<string | null>(null);
   const stepRef = useRef<ScannerStep>("camera");
+  const shapeRef = useRef<FrameShape>(frameShape);
   const cameraReadyRef = useRef<boolean>(false);
   const isCapturingRef = useRef<boolean>(false);
   const isVerifyingRef = useRef<boolean>(false);
@@ -117,6 +157,7 @@ export default function LiveReceiptScanner({
   const autoCooldownUntilRef = useRef<number>(0);
   const prevLumaRef = useRef<Uint8Array | null>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const analysisSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const focusRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -132,10 +173,71 @@ export default function LiveReceiptScanner({
 
   useEffect(() => { previewUrlRef.current = previewUrl; }, [previewUrl]);
   useEffect(() => { stepRef.current = step; }, [step]);
+  useEffect(() => { shapeRef.current = frameShape; }, [frameShape]);
   useEffect(() => { cameraReadyRef.current = cameraReady; }, [cameraReady]);
   useEffect(() => { fallbackReasonRef.current = fallbackReason; }, [fallbackReason]);
   useEffect(() => { flashOnRef.current = flashOn; }, [flashOn]);
   useEffect(() => { autoCaptureRef.current = autoCapture; }, [autoCapture]);
+
+  // ── Compute Real Available Screen Space for Frame & Preview ────────────────
+  const recomputeDimensions = useCallback(() => {
+    const modalEl = modalRef.current;
+    if (!modalEl) return;
+    const modalRect = modalEl.getBoundingClientRect();
+    if (modalRect.width <= 0 || modalRect.height <= 0) return;
+
+    const ratio = getTargetAspect(shapeRef.current);
+    const maxTargetW = Math.min(modalRect.width * 0.9, 560);
+
+    // Camera live stage bounds
+    if (topBarRef.current && bottomHudRef.current) {
+      const topRect = topBarRef.current.getBoundingClientRect();
+      const hudRect = bottomHudRef.current.getBoundingClientRect();
+      const topOffset = Math.max(0, Math.round(topRect.bottom - modalRect.top));
+      const bottomOffset = Math.max(0, Math.round(modalRect.bottom - hudRect.top));
+      const availH = Math.max(120, hudRect.top - topRect.bottom - 30); // 24px top hint margin + 6px bottom buffer
+      const availW = Math.max(140, maxTargetW);
+
+      setStageBounds({ top: topOffset, bottom: bottomOffset });
+      setFrameDims(fitAspectBox(availW, availH, ratio));
+    }
+
+    // Preview stage bounds (uses real preview bars so whole photo is never cut)
+    if (previewTopRef.current && previewDockRef.current) {
+      const pTopRect = previewTopRef.current.getBoundingClientRect();
+      const pDockRect = previewDockRef.current.getBoundingClientRect();
+      const pTopOff = Math.max(0, Math.round(pTopRect.bottom - modalRect.top));
+      const pBotOff = Math.max(0, Math.round(modalRect.bottom - pDockRect.top));
+      const pAvailH = Math.max(120, pDockRect.top - pTopRect.bottom - 14);
+      const pAvailW = Math.max(140, Math.min(modalRect.width * 0.92, 580));
+
+      setPreviewBounds({ top: pTopOff, bottom: pBotOff });
+      setPreviewDims(fitAspectBox(pAvailW, pAvailH, ratio));
+    }
+  }, []);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => recomputeDimensions());
+    const handleResize = () => recomputeDimensions();
+
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && modalRef.current) {
+      observer = new ResizeObserver(handleResize);
+      observer.observe(modalRef.current);
+      if (topBarRef.current) observer.observe(topBarRef.current);
+      if (bottomHudRef.current) observer.observe(bottomHudRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleResize);
+      observer?.disconnect();
+    };
+  }, [frameShape, step, supportsZoom, fallbackReason, recomputeDimensions]);
 
   const clearCapturedPhoto = useCallback(() => {
     if (previewUrlRef.current) {
@@ -251,6 +353,7 @@ export default function LiveReceiptScanner({
 
   const acquireCameraStream = useCallback(async (mode: "environment" | "user"): Promise<MediaStream> => {
     const candidates: MediaStreamConstraints[] = [
+      { video: { facingMode: { ideal: mode }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false },
       { video: { facingMode: { ideal: mode }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
       { video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
       { video: { facingMode: { ideal: mode } }, audio: false },
@@ -372,6 +475,7 @@ export default function LiveReceiptScanner({
 
         setIsStarting(false);
         setCameraReady(true);
+        requestAnimationFrame(() => recomputeDimensions());
       } catch (err: unknown) {
         if (attemptId !== attemptIdRef.current) return;
         stopCamera();
@@ -383,7 +487,7 @@ export default function LiveReceiptScanner({
         }
       }
     },
-    [acquireCameraStream, stopCamera, waitForVideoReady]
+    [acquireCameraStream, recomputeDimensions, stopCamera, waitForVideoReady]
   );
 
   const handleClose = useCallback(() => {
@@ -476,7 +580,7 @@ export default function LiveReceiptScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Capture photo (single-pass crop to frame, <= 1400px wide, JPEG 0.85)
+  // Capture photo (single-pass crop to frame + 3% margin, <= 1400px wide & <= 2600px tall, JPEG 0.85)
   const handleCapture = useCallback(
     async (fromAuto = false) => {
       if (!cameraReadyRef.current || isCapturingRef.current || isVerifyingRef.current) return;
@@ -504,7 +608,8 @@ export default function LiveReceiptScanner({
       try {
         const compressed = await cropAndCompressVideoFrame(video, frameRef.current, {
           maxWidth: 1400,
-          maxHeight: 1960,
+          maxHeight: 2600,
+          bleedRatio: 0.03,
           quality: 0.85,
           mirrored: facingMode === "user",
         });
@@ -519,7 +624,7 @@ export default function LiveReceiptScanner({
         previewUrlRef.current = url;
         setPreviewUrl(url);
         setCapturedFile(compressed);
-        // Note: keep stream alive behind preview so Retake returns instantaneously
+        // Keep stream open behind preview so Retake returns instantaneously
         setStep("preview");
       } catch {
         showToast("Failed to capture photo. Please try again.", "error");
@@ -530,7 +635,7 @@ export default function LiveReceiptScanner({
     [facingMode, setTorch, showToast]
   );
 
-  // Live blur / motion / brightness analyzer (~6 fps when camera active)
+  // Live blur / motion / brightness analyzer strictly inside the active frame area
   useEffect(() => {
     if (step !== "camera" || !cameraReady || fallbackReason) return;
 
@@ -542,13 +647,21 @@ export default function LiveReceiptScanner({
       const crop = computeVideoFrameCrop(video, frameRef.current, 0, facingMode === "user");
       if (!crop) return;
 
-      const W = 144;
-      const H = 192;
-      if (!analysisCanvasRef.current) {
+      const shape = shapeRef.current;
+      const W = shape === "wide" ? 192 : shape === "tall" ? 120 : 128;
+      const H = shape === "wide" ? 144 : shape === "tall" ? 264 : 256;
+
+      if (
+        !analysisCanvasRef.current ||
+        analysisSizeRef.current.w !== W ||
+        analysisSizeRef.current.h !== H
+      ) {
         const c = document.createElement("canvas");
         c.width = W;
         c.height = H;
         analysisCanvasRef.current = c;
+        analysisSizeRef.current = { w: W, h: H };
+        prevLumaRef.current = null;
       }
       const ctx = analysisCanvasRef.current.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
@@ -562,7 +675,7 @@ export default function LiveReceiptScanner({
       const pixels = ctx.getImageData(0, 0, W, H).data;
       const totalPx = W * H;
       const currLuma = new Uint8Array(totalPx);
-      const prevLuma = prevLumaRef.current;
+      const prevLuma = prevLumaRef.current && prevLumaRef.current.length === totalPx ? prevLumaRef.current : null;
 
       let lumaSum = 0;
       let diffSum = 0;
@@ -582,10 +695,10 @@ export default function LiveReceiptScanner({
       const motion = prevLuma && lumaCount > 0 ? diffSum / lumaCount : 0;
       prevLumaRef.current = currLuma;
 
-      const xStart = Math.floor(W * 0.12);
-      const xEnd = Math.floor(W * 0.88);
-      const yStart = Math.floor(H * 0.12);
-      const yEnd = Math.floor(H * 0.88);
+      const xStart = Math.floor(W * 0.1);
+      const xEnd = Math.floor(W * 0.9);
+      const yStart = Math.floor(H * 0.1);
+      const yEnd = Math.floor(H * 0.9);
 
       let gradSum = 0;
       let edgeHits = 0;
@@ -658,17 +771,15 @@ export default function LiveReceiptScanner({
   const handleStageTapFocus = (clientX: number, clientY: number) => {
     if (!cameraReadyRef.current || stepRef.current !== "camera" || fallbackReason) return;
     const video = videoRef.current;
-    const stage = stageRef.current;
-    if (!video || !stage) return;
+    const modal = modalRef.current;
+    if (!video || !modal) return;
 
-    const modalRect = stage.parentElement?.getBoundingClientRect();
-    if (modalRect) {
-      setFocusPoint({
-        x: clientX - modalRect.left,
-        y: clientY - modalRect.top,
-        key: Date.now(),
-      });
-    }
+    const modalRect = modal.getBoundingClientRect();
+    setFocusPoint({
+      x: clientX - modalRect.left,
+      y: clientY - modalRect.top,
+      key: Date.now(),
+    });
     haptic("selection");
 
     const track = trackRef.current;
@@ -732,11 +843,13 @@ export default function LiveReceiptScanner({
 
   const handleChangeFrameShape = (shape: FrameShape) => {
     haptic("selection");
+    shapeRef.current = shape;
     setFrameShape(shape);
     if (typeof window !== "undefined") localStorage.setItem(STORAGE_SHAPE_KEY, shape);
     prevLumaRef.current = null;
     autoSharpSinceRef.current = 0;
     setAutoProgress(0);
+    recomputeDimensions();
   };
 
   const handleToggleAuto = () => {
@@ -768,6 +881,7 @@ export default function LiveReceiptScanner({
     try {
       const compressed = await compressReceiptImage(file, {
         maxDimension: 1400,
+        maxHeight: 2600,
         quality: 0.85,
         fileName: file.name,
       });
@@ -805,6 +919,7 @@ export default function LiveReceiptScanner({
       if (flashBeforePreviewRef.current && supportsTorch) {
         setTorch(true);
       }
+      requestAnimationFrame(() => recomputeDimensions());
     } else {
       startCamera(facingMode);
     }
@@ -824,7 +939,6 @@ export default function LiveReceiptScanner({
     setVerifyStage("reading");
     haptic("medium");
 
-    // Turn off camera & wipe local preview right away
     stopCamera();
     clearCapturedPhoto();
     setStep("verifying");
@@ -870,7 +984,7 @@ export default function LiveReceiptScanner({
   const dashOffset = 264 * (1 - Math.max(0, Math.min(1, autoProgress)));
 
   return (
-    <div className="cf-sc-modal" role="dialog" aria-modal="true" aria-label="Verify Payment Scanner">
+    <div ref={modalRef} className="cf-sc-modal" role="dialog" aria-modal="true" aria-label="Verify Payment Scanner">
       <input
         ref={nativeCameraInputRef}
         type="file"
@@ -909,7 +1023,7 @@ export default function LiveReceiptScanner({
         )}
 
         {/* Top Overlay Header */}
-        <div className="cf-sc-top-bar">
+        <div ref={topBarRef} className="cf-sc-top-bar">
           <button type="button" className="cf-sc-icon-btn bare" onClick={handleClose} aria-label="Close scanner">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -919,7 +1033,18 @@ export default function LiveReceiptScanner({
 
           <div className="cf-sc-top-center">
             <div className="cf-sc-top-title">Verify Payment</div>
-            <div className="cf-sc-top-sub">Scan the receipt or enter details manually to verify your payment.</div>
+            <div className="cf-sc-pill-group" role="group" aria-label="Bank provider">
+              {(["CBE", "TELEBIRR"] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
+                  onClick={() => handleSelectProvider(p)}
+                >
+                  {p === "CBE" ? "CBE" : "Telebirr"}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="cf-sc-top-right">
@@ -959,10 +1084,11 @@ export default function LiveReceiptScanner({
           </div>
         </div>
 
-        {/* Center Stage */}
+        {/* Center Stage: Open Camera Corridor Between Top & Bottom Bars */}
         <div
           ref={stageRef}
           className="cf-sc-stage"
+          style={{ top: `${stageBounds.top}px`, bottom: `${stageBounds.bottom}px` }}
           onTouchStart={(e) => {
             if (e.touches.length === 2 && supportsZoom) {
               const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -1060,71 +1186,24 @@ export default function LiveReceiptScanner({
             </div>
           ) : (
             <>
-              {/* Compact Floating Utility Bar */}
-              <div className="cf-sc-toolbar">
-                <div className="cf-sc-pill-group" role="group" aria-label="Bank provider">
-                  {(["CBE", "TELEBIRR"] as const).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
-                      onClick={() => handleSelectProvider(p)}
-                    >
-                      {p === "CBE" ? "CBE" : "Telebirr"}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="cf-sc-pill-group" role="group" aria-label="Frame shape">
-                  <button
-                    type="button"
-                    className={`cf-sc-seg-btn subtle ${frameShape === "tall" ? "active" : ""}`}
-                    onClick={() => handleChangeFrameShape("tall")}
-                  >
-                    Tall receipt
-                  </button>
-                  <button
-                    type="button"
-                    className={`cf-sc-seg-btn subtle ${frameShape === "screenshot" ? "active" : ""}`}
-                    onClick={() => handleChangeFrameShape("screenshot")}
-                  >
-                    Screenshot
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  className={`cf-sc-mini-pill ${autoCapture ? "active" : ""}`}
-                  onClick={handleToggleAuto}
-                  aria-pressed={autoCapture}
-                >
-                  {autoCapture ? "Auto: ON" : "Auto"}
-                </button>
-
-                <button
-                  type="button"
-                  className="cf-sc-mini-pill"
-                  onClick={() => {
-                    pickingFileRef.current = true;
-                    galleryInputRef.current?.click();
-                  }}
-                  aria-label="Choose from photos"
-                >
-                  🖼️ Photos
-                </button>
-              </div>
-
-              {/* Giant Frame with Blue L-Corners */}
               <div
                 ref={frameRef}
-                className={`cf-sc-frame ${frameShape} ${
+                className={`cf-sc-frame ${
                   qualityState === "sharp"
                     ? "is-sharp"
                     : qualityState === "dark" || qualityState === "moving"
                     ? "is-warn"
                     : ""
                 }`}
+                style={{
+                  width: `${frameDims.width}px`,
+                  height: `${frameDims.height}px`,
+                  marginTop: "16px",
+                }}
               >
+                {/* Hint sits just above the top border without squeezing the frame */}
+                <div className="cf-sc-hint-above">Fit the whole receipt inside the frame</div>
+
                 <div className="cf-sc-corner tl" />
                 <div className="cf-sc-corner tr" />
                 <div className="cf-sc-corner bl" />
@@ -1138,123 +1217,167 @@ export default function LiveReceiptScanner({
                 )}
               </div>
 
-              {/* Lightbulb Tip Pill Below Frame */}
-              <div
-                className={`cf-sc-tip-pill ${
-                  qualityState === "sharp"
-                    ? "state-sharp"
-                    : qualityState === "dark" || qualityState === "moving"
-                    ? "state-warn"
-                    : ""
-                }`}
-                style={{ visibility: isStarting ? "hidden" : "visible" }}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 18h6" />
-                  <path d="M10 22h4" />
-                  <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
-                </svg>
-                <span>{qualityText}</span>
-              </div>
-
-              {/* Hardware Zoom Slider (shown only when device supports zoom) */}
-              {supportsZoom && (
-                <div className="cf-sc-zoom-wrap">
-                  <span style={{ fontSize: "12px", color: "#8e8e93", fontWeight: 700 }}>Zoom</span>
-                  <input
-                    type="range"
-                    className="cf-sc-zoom-slider"
-                    min={zoomRange.min}
-                    max={zoomRange.max}
-                    step={zoomRange.step}
-                    value={zoomVal}
-                    onChange={(e) => applyZoom(parseFloat(e.target.value))}
-                    aria-label="Camera zoom"
-                  />
-                  <span style={{ fontSize: "12px", fontWeight: 700, minWidth: "34px", textAlign: "right" }}>
-                    {zoomVal.toFixed(1)}x
-                  </span>
+              {/* Live light & sharpness pill anchored inside bottom of stage */}
+              {!isStarting && (
+                <div
+                  className={`cf-sc-tip-pill ${
+                    qualityState === "sharp"
+                      ? "state-sharp"
+                      : qualityState === "dark" || qualityState === "moving"
+                      ? "state-warn"
+                      : ""
+                  }`}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 18h6" />
+                    <path d="M10 22h4" />
+                    <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+                  </svg>
+                  <span>{qualityText}</span>
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* Bottom Dark Dock: Cancel | Big Blue Shutter | Verify */}
+        {/* Combined Bottom HUD: Shape Bar + Optional Zoom + Dark Dock */}
         {!fallbackReason && (
-          <div className="cf-sc-dock">
-            <button type="button" className="cf-sc-dock-action" onClick={handleClose} aria-label="Cancel">
-              <div className="cf-sc-dock-circle">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
+          <div ref={bottomHudRef} className="cf-sc-bottom-hud">
+            {supportsZoom && (
+              <div className="cf-sc-zoom-wrap">
+                <span style={{ fontSize: "11px", color: "#8e8e93", fontWeight: 700 }}>Zoom</span>
+                <input
+                  type="range"
+                  className="cf-sc-zoom-slider"
+                  min={zoomRange.min}
+                  max={zoomRange.max}
+                  step={zoomRange.step}
+                  value={zoomVal}
+                  onChange={(e) => applyZoom(parseFloat(e.target.value))}
+                  aria-label="Camera zoom"
+                />
+                <span style={{ fontSize: "11px", fontWeight: 700, minWidth: "32px", textAlign: "right" }}>
+                  {zoomVal.toFixed(1)}x
+                </span>
               </div>
-              <span>Cancel</span>
-            </button>
+            )}
 
-            <button
-              type="button"
-              className={`cf-sc-shutter ${qualityState === "sharp" ? "is-sharp" : ""} ${
-                pulseShutterHint ? "pulse-hint" : ""
-              }`}
-              onClick={() => handleCapture(false)}
-              onAnimationEnd={() => setPulseShutterHint(false)}
-              disabled={!cameraReady}
-              aria-disabled={!cameraReady}
-              aria-label="Capture receipt photo"
-            >
-              {autoCapture && (
-                <svg className="cf-sc-auto-ring" viewBox="0 0 92 92">
-                  <circle
-                    cx="46"
-                    cy="46"
-                    r="42"
-                    fill="none"
-                    stroke="#30d158"
-                    strokeWidth="4"
-                    strokeLinecap="round"
-                    strokeDasharray={264}
-                    strokeDashoffset={dashOffset}
-                    style={{ transition: "stroke-dashoffset 0.12s linear" }}
-                  />
-                </svg>
-              )}
-              <div className="cf-sc-shutter-inner">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-                </svg>
+            <div className="cf-sc-toolbar">
+              <div className="cf-sc-pill-group" role="group" aria-label="Frame shape">
+                {(
+                  [
+                    { id: "screenshot", label: "Screenshot" },
+                    { id: "tall", label: "Tall receipt" },
+                    { id: "wide", label: "Wide" },
+                  ] as const
+                ).map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={`cf-sc-seg-btn subtle ${frameShape === s.id ? "active" : ""}`}
+                    onClick={() => handleChangeFrameShape(s.id)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
               </div>
-            </button>
 
-            <button
-              type="button"
-              className="cf-sc-dock-action"
-              style={{ opacity: 0.45 }}
-              onClick={() => {
-                haptic("light");
-                setPulseShutterHint(false);
-                requestAnimationFrame(() => setPulseShutterHint(true));
-                showToast("Tap the blue camera button to take a photo first", "info");
-              }}
-              aria-label="Verify after capture"
-            >
-              <div className="cf-sc-dock-circle primary">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                  <polyline points="12 5 19 12 12 19" />
-                </svg>
-              </div>
-              <span>Verify</span>
-            </button>
+              <button
+                type="button"
+                className={`cf-sc-mini-pill ${autoCapture ? "active" : ""}`}
+                onClick={handleToggleAuto}
+                aria-pressed={autoCapture}
+              >
+                {autoCapture ? "Auto: ON" : "Auto"}
+              </button>
+
+              <button
+                type="button"
+                className="cf-sc-mini-pill"
+                onClick={() => {
+                  pickingFileRef.current = true;
+                  galleryInputRef.current?.click();
+                }}
+                aria-label="Choose from photos"
+              >
+                🖼️
+              </button>
+            </div>
+
+            <div className="cf-sc-dock">
+              <button type="button" className="cf-sc-dock-action" onClick={handleClose} aria-label="Cancel">
+                <div className="cf-sc-dock-circle">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </div>
+                <span>Cancel</span>
+              </button>
+
+              <button
+                type="button"
+                className={`cf-sc-shutter ${qualityState === "sharp" ? "is-sharp" : ""} ${
+                  pulseShutterHint ? "pulse-hint" : ""
+                }`}
+                onClick={() => handleCapture(false)}
+                onAnimationEnd={() => setPulseShutterHint(false)}
+                disabled={!cameraReady}
+                aria-disabled={!cameraReady}
+                aria-label="Capture receipt photo"
+              >
+                {autoCapture && (
+                  <svg className="cf-sc-auto-ring" viewBox="0 0 92 92">
+                    <circle
+                      cx="46"
+                      cy="46"
+                      r="42"
+                      fill="none"
+                      stroke="#30d158"
+                      strokeWidth="4"
+                      strokeLinecap="round"
+                      strokeDasharray={264}
+                      strokeDashoffset={dashOffset}
+                      style={{ transition: "stroke-dashoffset 0.12s linear" }}
+                    />
+                  </svg>
+                )}
+                <div className="cf-sc-shutter-inner">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                  </svg>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className="cf-sc-dock-action"
+                style={{ opacity: 0.45 }}
+                onClick={() => {
+                  haptic("light");
+                  setPulseShutterHint(false);
+                  requestAnimationFrame(() => setPulseShutterHint(true));
+                  showToast("Tap the blue camera button to take a photo first", "info");
+                }}
+                aria-label="Verify after capture"
+              >
+                <div className="cf-sc-dock-circle primary">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                    <polyline points="12 5 19 12 12 19" />
+                  </svg>
+                </div>
+                <span>Verify</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      {/* ── 2. PREVIEW VIEW ── */}
+      {/* ── 2. PREVIEW VIEW (Same Tall Frame, Entire Photo Visible) ── */}
       {step === "preview" && previewUrl && (
         <div className="cf-sc-view">
-          <div className="cf-sc-top-bar">
+          <div ref={previewTopRef} className="cf-sc-top-bar">
             <button type="button" className="cf-sc-icon-btn bare" onClick={handleClose} aria-label="Close preview">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
@@ -1263,28 +1386,32 @@ export default function LiveReceiptScanner({
             </button>
 
             <div className="cf-sc-top-center">
-              <div className="cf-sc-top-title">Verify Payment</div>
-              <div className="cf-sc-top-sub">Check that the receipt text & QR code look clear.</div>
+              <div className="cf-sc-top-title">Check Receipt Photo</div>
+              <div className="cf-sc-pill-group" role="group" aria-label="Bank provider">
+                {(["CBE", "TELEBIRR"] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
+                    onClick={() => handleSelectProvider(p)}
+                  >
+                    {p === "CBE" ? "CBE" : "Telebirr"}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="cf-sc-top-right" />
           </div>
 
-          <div className="cf-sc-preview-stage">
-            <div className="cf-sc-pill-group" role="group" aria-label="Bank provider" style={{ zIndex: 16 }}>
-              {(["CBE", "TELEBIRR"] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
-                  onClick={() => handleSelectProvider(p)}
-                >
-                  {p === "CBE" ? "CBE" : "Telebirr"}
-                </button>
-              ))}
-            </div>
-
-            <div className={`cf-sc-preview-box ${frameShape}`}>
+          <div
+            className="cf-sc-preview-stage"
+            style={{ top: `${previewBounds.top}px`, bottom: `${previewBounds.bottom}px` }}
+          >
+            <div
+              className="cf-sc-preview-box"
+              style={{ width: `${previewDims.width}px`, height: `${previewDims.height}px` }}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewUrl}
@@ -1298,7 +1425,7 @@ export default function LiveReceiptScanner({
             </div>
           </div>
 
-          <div className="cf-sc-preview-dock">
+          <div ref={previewDockRef} className="cf-sc-preview-dock">
             <button
               type="button"
               className="btn btn-secondary"

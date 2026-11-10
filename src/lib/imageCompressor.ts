@@ -2,8 +2,8 @@
  * imageCompressor.ts
  *
  * Client-side receipt image cropper & compressor using HTML5 Canvas.
- * Keeps receipts up to ~1400px wide at JPEG 0.85 for sharp OCR/QR reading
- * and fast uploads on mobile data, with iOS/Android safe fallbacks.
+ * Preserves aspect ratio, keeps receipts up to ~1400px wide and ~2600px tall
+ * at JPEG 0.85 for crisp OCR/QR reading and fast uploads.
  */
 
 export interface CompressOptions {
@@ -58,12 +58,13 @@ export function canvasToJpegBlob(canvas: HTMLCanvasElement, quality = 0.85): Pro
 
 /**
  * Maps a screen-space guide frame element onto raw <video> pixel coordinates,
- * accurately compensating for `object-fit: cover` scaling and mirrored front cameras.
+ * accurately compensating for `object-fit: cover` scaling, mirrored front cameras,
+ * and applying a symmetric safety margin (default 3%) inside sensor bounds.
  */
 export function computeVideoFrameCrop(
   video: HTMLVideoElement,
   frameEl: HTMLElement | null,
-  bleedRatio = 0.02,
+  bleedRatio = 0.03,
   mirrored = false
 ): FrameCropRect | null {
   const vw = video.videoWidth;
@@ -103,10 +104,13 @@ export function computeVideoFrameCrop(
     sh += padY * 2;
   }
 
-  sx = Math.max(0, Math.min(vw - 1, sx));
-  sy = Math.max(0, Math.min(vh - 1, sy));
-  sw = Math.max(1, Math.min(vw - sx, sw));
-  sh = Math.max(1, Math.min(vh - sy, sh));
+  // Symmetric clamping so hitting a sensor edge doesn't shift the opposite edge
+  const leftClip = Math.max(0, -sx);
+  const topClip = Math.max(0, -sy);
+  sx = Math.max(0, sx);
+  sy = Math.max(0, sy);
+  sw = Math.max(1, Math.min(vw - sx, sw - leftClip));
+  sh = Math.max(1, Math.min(vh - sy, sh - topClip));
 
   return {
     sx: Math.round(sx),
@@ -117,41 +121,36 @@ export function computeVideoFrameCrop(
 }
 
 /**
- * Single-pass video frame capture → crop to guide frame → resize (~1400px wide) → JPEG 0.85 File.
+ * Single-pass video frame capture → crop to guide frame (+3% margin) →
+ * proportional resize (<= 1400px wide, <= 2600px tall) → JPEG 0.85 File.
  */
 export async function cropAndCompressVideoFrame(
   video: HTMLVideoElement,
   frameEl: HTMLElement | null,
-  options: { maxWidth?: number; maxHeight?: number; quality?: number; mirrored?: boolean } = {}
+  options: { maxWidth?: number; maxHeight?: number; bleedRatio?: number; quality?: number; mirrored?: boolean } = {}
 ): Promise<File | null> {
   const maxWidth = options.maxWidth ?? 1400;
-  const maxHeight = options.maxHeight ?? 1960;
+  const maxHeight = options.maxHeight ?? 2600;
+  const bleedRatio = options.bleedRatio ?? 0.03;
   const quality = options.quality ?? 0.85;
 
-  const crop = computeVideoFrameCrop(video, frameEl, 0.02, Boolean(options.mirrored));
+  const crop = computeVideoFrameCrop(video, frameEl, bleedRatio, Boolean(options.mirrored));
   if (!crop) return null;
 
-  let targetW = crop.sw;
-  let targetH = crop.sh;
-  if (targetW > maxWidth) {
-    targetH = Math.round((targetH * maxWidth) / targetW);
-    targetW = maxWidth;
-  }
-  if (targetH > maxHeight) {
-    targetW = Math.round((targetW * maxHeight) / targetH);
-    targetH = maxHeight;
-  }
+  const downscale = Math.min(1, maxWidth / crop.sw, maxHeight / crop.sh);
+  const targetW = Math.max(1, Math.round(crop.sw * downscale));
+  const targetH = Math.max(1, Math.round(crop.sh * downscale));
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, targetW);
-  canvas.height = Math.max(1, targetH);
+  canvas.width = targetW;
+  canvas.height = targetH;
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, targetW, targetH);
 
   const blob = await canvasToJpegBlob(canvas, quality);
   canvas.width = 0;
@@ -169,7 +168,7 @@ export async function compressReceiptImage(
   options: CompressOptions = {}
 ): Promise<File> {
   const maxWidth = options.maxDimension ?? 1400;
-  const maxHeight = options.maxHeight ?? 1960;
+  const maxHeight = options.maxHeight ?? 2600;
   const quality = options.quality ?? 0.85;
   const defaultName = `receipt_${Date.now()}.jpg`;
   const fileName =
@@ -195,21 +194,15 @@ export async function compressReceiptImage(
     img.onload = async () => {
       URL.revokeObjectURL(objectUrl);
 
-      let width = img.naturalWidth || img.width;
-      let height = img.naturalHeight || img.height;
-
-      if (width > maxWidth) {
-        height = Math.round((height * maxWidth) / width);
-        width = maxWidth;
-      }
-      if (height > maxHeight) {
-        width = Math.round((width * maxHeight) / height);
-        height = maxHeight;
-      }
+      const natW = img.naturalWidth || img.width;
+      const natH = img.naturalHeight || img.height;
+      const downscale = Math.min(1, maxWidth / Math.max(1, natW), maxHeight / Math.max(1, natH));
+      const width = Math.max(1, Math.round(natW * downscale));
+      const height = Math.max(1, Math.round(natH * downscale));
 
       const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, width);
-      canvas.height = Math.max(1, height);
+      canvas.width = width;
+      canvas.height = height;
 
       const ctx = canvas.getContext("2d");
       if (!ctx) {
@@ -219,7 +212,7 @@ export async function compressReceiptImage(
 
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, width, height);
 
       const blob = await canvasToJpegBlob(canvas, quality);
       canvas.width = 0;
