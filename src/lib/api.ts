@@ -248,6 +248,7 @@ export interface VerificationResult {
   expectedAmount?: number | string;
   payerName?: string;
   payerPhone?: string;
+  receivingAccount?: string;
   verifiedAt?: string;
   message?: string;
 }
@@ -277,6 +278,15 @@ export function verifyUrl(payload: {
 }
 
 export async function verifyImage(file: File, expectedAmount?: number, provider?: string): Promise<VerificationResult> {
+  return verifyImageWithProgress(file, expectedAmount, provider);
+}
+
+export async function verifyImageWithProgress(
+  file: File,
+  expectedAmount?: number,
+  provider?: string,
+  onStage?: (stage: "reading" | "checking_bank") => void
+): Promise<VerificationResult> {
   const token = getToken();
   const formData = new FormData();
   formData.append("receipt", file);
@@ -287,14 +297,85 @@ export async function verifyImage(file: File, expectedAmount?: number, provider?
     formData.append("provider", provider);
   }
 
-  const res = await fetch(`${BASE_URL}/api/verify/image`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: formData,
-  });
+  const useStream = Boolean(onStage);
+  const url = `${BASE_URL}/api/verify/image${useStream ? "?stream=1" : ""}`;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (useStream) headers.Accept = "application/x-ndjson";
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+  } catch {
+    throw new Error("Could not connect to the verification server. Please check your internet connection.");
+  }
+
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+
+  if (useStream && contentType.includes("application/x-ndjson") && res.body && typeof res.body.getReader === "function") {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalHttpStatus = res.status;
+    let finalResult: VerificationResult | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const evt = JSON.parse(trimmed) as {
+            stage?: "reading" | "checking_bank";
+            done?: boolean;
+            httpStatus?: number;
+            result?: VerificationResult & { error?: string };
+          };
+          if (evt.stage && onStage) {
+            onStage(evt.stage);
+          } else if (evt.done && evt.result) {
+            finalHttpStatus = evt.httpStatus || 200;
+            finalResult = evt.result;
+          }
+        } catch {
+          // ignore malformed line
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const evt = JSON.parse(buffer.trim());
+        if (evt.done && evt.result) {
+          finalHttpStatus = evt.httpStatus || 200;
+          finalResult = evt.result;
+        }
+      } catch {
+        // ignore trailing partial
+      }
+    }
+
+    if (!finalResult) {
+      throw new Error("Could not verify receipt right now. Please try again.");
+    }
+    const maybeErr = (finalResult as VerificationResult & { error?: string }).error;
+    if (!finalResult.status && (finalHttpStatus >= 400 || maybeErr)) {
+      throw new Error(maybeErr || finalResult.message || "Image verification failed");
+    }
+    return finalResult;
+  }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  if (!res.ok && !data?.status) {
     throw new Error(data?.error || data?.message || "Image verification failed");
   }
   return data as VerificationResult;

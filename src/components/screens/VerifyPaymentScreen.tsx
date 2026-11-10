@@ -74,12 +74,15 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
       // Compress before upload for rapid mobile transfer
       showToast("Optimizing receipt...", "info");
       const compressed = await compressReceiptImage(file, {
-        maxDimension: 1280,
-        quality: 0.82,
+        maxDimension: 1400,
+        quality: 0.85,
         fileName: file.name,
       });
 
       const res = await verifyImage(compressed, undefined, provider);
+      setFile(null);
+      const fileEl = document.getElementById("receipt-file") as HTMLInputElement | null;
+      if (fileEl) fileEl.value = "";
       setResult(res);
       handleResultHaptic(res.status);
     } catch (err: unknown) {
@@ -98,13 +101,19 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
     }
   }
 
-  const isUnreadable =
+  const isWrongReceiver = Boolean(
+    result && /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
+  );
+
+  const isUnreadable = Boolean(
     result &&
-    (result.status === "INVALID_RECEIPT" ||
-      result.status === "INVALID" ||
-      result.status === "FAILED_UPSTREAM" ||
-      result.status === "UNKNOWN" ||
-      result.status === "FAILED");
+      !isWrongReceiver &&
+      (result.status === "INVALID_RECEIPT" ||
+        result.status === "INVALID" ||
+        result.status === "FAILED_UPSTREAM" ||
+        result.status === "UNKNOWN" ||
+        result.status === "FAILED")
+  );
 
   return (
     <div className="screen">
@@ -432,15 +441,15 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                 ? "2px solid #30d158"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "2px solid #ff453a"
-                : result.status === "AMOUNT_MISMATCH"
-                ? "2px solid #ffd60a"
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                ? "2px solid #ff9f0a"
                 : "2px solid #ff453a",
               background: result.status === "VERIFIED"
                 ? "rgba(48, 209, 88, 0.12)"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "rgba(255, 69, 58, 0.12)"
-                : result.status === "AMOUNT_MISMATCH"
-                ? "rgba(255, 214, 10, 0.12)"
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                ? "rgba(255, 159, 10, 0.14)"
                 : "rgba(255, 69, 58, 0.12)",
               animation: "fadeIn 0.2s ease",
             }}
@@ -456,18 +465,18 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                     ? "#30d158"
                     : result.status === "FLAGGED_DUPLICATE"
                     ? "#ff453a"
-                    : result.status === "AMOUNT_MISMATCH"
-                    ? "#ffd60a"
+                    : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                    ? "#ff9f0a"
                     : "#ff453a",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: "22px",
-                  color: result.status === "AMOUNT_MISMATCH" ? "#000" : "#fff",
+                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "#000" : "#fff",
                   flexShrink: 0,
                 }}
               >
-                {result.status === "VERIFIED" ? "✓" : result.status === "FLAGGED_DUPLICATE" ? "✕" : result.status === "AMOUNT_MISMATCH" ? "!" : "✕"}
+                {result.status === "VERIFIED" ? "✓" : result.status === "FLAGGED_DUPLICATE" ? "✕" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
               </div>
               <div>
                 <h3 style={{ fontSize: "18px", fontWeight: 800 }}>
@@ -477,6 +486,8 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                     ? "Duplicate Payment!"
                     : result.status === "AMOUNT_MISMATCH"
                     ? "Amount Mismatch"
+                    : isWrongReceiver
+                    ? "Wrong Receiver — Not Accepted"
                     : "Verification Failed"}
                 </h3>
                 <p className="text-muted text-xs">
@@ -541,6 +552,12 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span className="text-muted">Payer Phone:</span>
                   <span>{result.payerPhone}</span>
+                </div>
+              )}
+              {result.receivingAccount && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Paid To:</span>
+                  <span>{result.receivingAccount}</span>
                 </div>
               )}
               {result.provider && (
