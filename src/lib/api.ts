@@ -23,6 +23,7 @@ async function request<T>(
     res = await fetch(`${BASE_URL}${path}`, {
       method,
       headers,
+      cache: method === "GET" ? "no-store" : "default",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -241,6 +242,7 @@ export async function deleteCashier(id: string): Promise<{ message: string; ok: 
 
 // ── Payment Verification ──────────────────────────────────────────────────────
 export interface VerificationResult {
+  id?: string;
   status: "VERIFIED" | "FLAGGED_DUPLICATE" | "AMOUNT_MISMATCH" | "INVALID" | "INVALID_RECEIPT" | "FAILED_UPSTREAM" | string;
   provider?: string;
   txnReference?: string;
@@ -413,6 +415,6 @@ export function getVerificationHistory(
 ): Promise<VerificationHistoryResponse> {
   return request(
     "GET",
-    `/api/verify/history?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}`
+    `/api/verify/history?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&_t=${Date.now()}`
   );
 }

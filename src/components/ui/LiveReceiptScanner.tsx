@@ -451,7 +451,32 @@ export default function LiveReceiptScanner({
       void startCamera(facingMode);
     }, 0);
 
-    const backHandler = () => handleClose();
+    const backHandler = () => {
+      if (isVerifyingRef.current) return;
+      if (stepRef.current === "preview") {
+        haptic("light");
+        clearCapturedPhoto();
+        setStep("camera");
+        const streamAlive = Boolean(streamRef.current && trackRef.current?.readyState === "live");
+        if (streamAlive) {
+          setIsStarting(false);
+          setCameraReady(true);
+        } else {
+          void startCamera(facingMode);
+        }
+        return;
+      }
+      handleClose();
+    };
+
+    try {
+      window.history.pushState({ cfScanner: true }, "");
+    } catch {}
+    const onPopState = () => {
+      backHandler();
+    };
+    window.addEventListener("popstate", onPopState);
+
     try {
       if (tg?.BackButton) {
         tg.BackButton.show();
@@ -502,10 +527,14 @@ export default function LiveReceiptScanner({
     return () => {
       clearTimeout(startTimer);
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+      window.removeEventListener("popstate", onPopState);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
       try { tgEvents?.offEvent?.("deactivated", handleBackground); } catch {}
-      try { tg?.BackButton?.offClick?.(backHandler); } catch {}
+      try {
+        tg?.BackButton?.offClick?.(backHandler);
+        tg?.BackButton?.hide?.();
+      } catch {}
       stopCamera();
       clearCapturedPhoto();
     };

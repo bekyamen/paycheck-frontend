@@ -22,6 +22,8 @@ interface VerifyPaymentScreenProps {
   user: UserProfile;
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
   onLogout?: () => void;
+  onBack?: () => void;
+  onScannerOpenChange?: (open: boolean) => void;
 }
 
 type VerifyTab = "photo" | "ref";
@@ -97,10 +99,26 @@ function ProviderBadgeIcon({ provider }: { provider: string }) {
   );
 }
 
-export default function VerifyPaymentScreen({ user, showToast, onLogout }: VerifyPaymentScreenProps) {
+export default function VerifyPaymentScreen({
+  user,
+  showToast,
+  onLogout,
+  onBack,
+  onScannerOpenChange,
+}: VerifyPaymentScreenProps) {
   const [tab, setTab] = useState<VerifyTab>("photo");
   const [refSubMode, setRefSubMode] = useState<RefSubMode>("manual");
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+
+  const openScanner = useCallback(() => {
+    setIsScannerOpen(true);
+    onScannerOpenChange?.(true);
+  }, [onScannerOpenChange]);
+
+  const closeScanner = useCallback(() => {
+    setIsScannerOpen(false);
+    onScannerOpenChange?.(false);
+  }, [onScannerOpenChange]);
 
   // Date filter + summary gauge + recent feed
   const [range, setRange] = useState<VerificationHistoryRange>("today");
@@ -115,6 +133,8 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
   const [uploadingImage, setUploadingImage] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const dateMenuRef = useRef<HTMLDivElement | null>(null);
+  const recentItemsRef = useRef<VerificationHistoryItem[]>([]);
+  const pendingLocalRef = useRef<VerificationHistoryItem[]>([]);
 
   // Reference / SMS form state
   const [provider, setProvider] = useState<"CBE" | "TELEBIRR">("CBE");
@@ -127,29 +147,133 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<VerificationResult | null>(null);
 
-  const loadHistory = useCallback(async (targetRange: VerificationHistoryRange) => {
-    try {
-      const data = await getVerificationHistory(targetRange, 15);
-      setSummaryAmount(Number(data?.summary?.totalAmount || 0));
-      setSummaryCount(Number(data?.summary?.totalCount || 0));
-      setByProvider(data?.summary?.byProvider || {});
-      setRecentItems(Array.isArray(data?.recent) ? data.recent : []);
-    } catch {
-      // Keep UI functional even if history fails temporarily
-    } finally {
-      setHistoryLoading(false);
+  const mergeServerHistory = useCallback((data: Awaited<ReturnType<typeof getVerificationHistory>>) => {
+    const serverRecent = Array.isArray(data?.recent) ? data.recent : [];
+    const serverKeys = new Set(
+      serverRecent.map((item) => `${String(item.provider).toUpperCase()}:${item.txnReference}`)
+    );
+
+    const nowMs = Date.now();
+    const pendingLocal = pendingLocalRef.current.filter(
+      (item) =>
+        nowMs - new Date(item.createdAt).getTime() < 60000 &&
+        !serverKeys.has(`${String(item.provider).toUpperCase()}:${item.txnReference}`)
+    );
+    pendingLocalRef.current = pendingLocal;
+
+    const merged = [...pendingLocal, ...serverRecent].slice(0, 15);
+    recentItemsRef.current = merged;
+    setRecentItems(merged);
+
+    let totalAmt = Number(data?.summary?.totalAmount || 0);
+    let totalCnt = Number(data?.summary?.totalCount || 0);
+    const nextByProv: Record<string, { amount: number; count: number }> = {
+      ...(data?.summary?.byProvider || {}),
+    };
+
+    for (const item of pendingLocal) {
+      if (item.status === "VERIFIED" && item.amount > 0) {
+        totalAmt += item.amount;
+        totalCnt += 1;
+        const prev = nextByProv[item.provider] || { amount: 0, count: 0 };
+        nextByProv[item.provider] = {
+          amount: Number(prev.amount || 0) + item.amount,
+          count: Number(prev.count || 0) + 1,
+        };
+      }
     }
+
+    setSummaryAmount(totalAmt);
+    setSummaryCount(totalCnt);
+    setByProvider(nextByProv);
   }, []);
+
+  const loadHistory = useCallback(
+    async (targetRange: VerificationHistoryRange) => {
+      try {
+        const data = await getVerificationHistory(targetRange, 15);
+        mergeServerHistory(data);
+      } catch {
+        // Keep optimistic UI items intact if history endpoint fails temporarily
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [mergeServerHistory]
+  );
+
+  const applyVerificationInstant = useCallback(
+    (res: VerificationResult, targetRange: VerificationHistoryRange) => {
+      const prov = String(res.provider || "").toUpperCase();
+      const ref = res.txnReference ? String(res.txnReference) : "";
+      if (!ref && res.status !== "VERIFIED") return;
+
+      const existing = recentItemsRef.current.find(
+        (item) =>
+          (res.id && item.id === res.id) ||
+          (ref && item.txnReference === ref && String(item.provider).toUpperCase() === (prov || "CBE"))
+      );
+      const wasAlreadyVerified = Boolean(existing && existing.status === "VERIFIED");
+
+      const nowIso = new Date().toISOString();
+      const amountNum = Number(res.amount || 0);
+      const newItem: VerificationHistoryItem = {
+        id: res.id || existing?.id || `local-${Date.now()}`,
+        provider: prov && prov !== "UNKNOWN" ? prov : existing?.provider || "CBE",
+        txnReference: ref || existing?.txnReference || "—",
+        amount: Number.isFinite(amountNum) ? amountNum : 0,
+        expectedAmount:
+          res.expectedAmount !== undefined && res.expectedAmount !== null ? Number(res.expectedAmount) : null,
+        payerName: res.payerName || existing?.payerName || null,
+        payerPhone: res.payerPhone || existing?.payerPhone || null,
+        receivingAccount: res.receivingAccount || existing?.receivingAccount || null,
+        status: res.status,
+        verifiedAt: res.verifiedAt || (res.status === "VERIFIED" ? nowIso : existing?.verifiedAt || null),
+        createdAt: existing?.createdAt || nowIso,
+      };
+
+      const nextPending = pendingLocalRef.current.filter(
+        (item) => !(item.txnReference === newItem.txnReference && item.provider === newItem.provider)
+      );
+      nextPending.unshift(newItem);
+      pendingLocalRef.current = nextPending.slice(0, 10);
+
+      const nextList = recentItemsRef.current.filter(
+        (item) =>
+          item.id !== newItem.id &&
+          !(item.txnReference === newItem.txnReference && item.provider === newItem.provider)
+      );
+      const updatedList = [newItem, ...nextList].slice(0, 15);
+      recentItemsRef.current = updatedList;
+      setRecentItems(updatedList);
+      setHistoryLoading(false);
+
+      if (res.status === "VERIFIED" && !wasAlreadyVerified && newItem.amount > 0) {
+        setSummaryAmount((prev) => prev + newItem.amount);
+        setSummaryCount((prev) => prev + 1);
+        setByProvider((prev) => {
+          const cur = prev[newItem.provider] || { amount: 0, count: 0 };
+          return {
+            ...prev,
+            [newItem.provider]: {
+              amount: Number(cur.amount || 0) + newItem.amount,
+              count: Number(cur.count || 0) + 1,
+            },
+          };
+        });
+      }
+
+      void loadHistory(targetRange);
+    },
+    [loadHistory]
+  );
 
   useEffect(() => {
     let active = true;
     getVerificationHistory(range, 15)
       .then((data) => {
         if (!active) return;
-        setSummaryAmount(Number(data?.summary?.totalAmount || 0));
-        setSummaryCount(Number(data?.summary?.totalCount || 0));
-        setByProvider(data?.summary?.byProvider || {});
-        setRecentItems(Array.isArray(data?.recent) ? data.recent : []);
+        mergeServerHistory(data);
       })
       .catch(() => {
         // Keep UI functional even if history fails temporarily
@@ -160,7 +284,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
     return () => {
       active = false;
     };
-  }, [range]);
+  }, [mergeServerHistory, range]);
 
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
@@ -196,7 +320,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
       const res = await verifyImageWithProgress(compressed);
       setResult(res);
       handleResultHaptic(res.status);
-      void loadHistory(range);
+      applyVerificationInstant(res, range);
     } catch (err: unknown) {
       haptic("error");
       const msg = (err as Error).message || "Image verification failed";
@@ -230,7 +354,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
       });
       setResult(res);
       handleResultHaptic(res.status);
-      void loadHistory(range);
+      applyVerificationInstant(res, range);
     } catch (err: unknown) {
       haptic("error");
       const msg = (err as Error).message || "Verification failed";
@@ -260,7 +384,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
         : await verifyText({ rawText: raw, expectedAmount });
       setResult(res);
       handleResultHaptic(res.status);
-      void loadHistory(range);
+      applyVerificationInstant(res, range);
     } catch (err: unknown) {
       haptic("error");
       const msg = (err as Error).message || "SMS/Link verification failed";
@@ -311,11 +435,11 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
       {/* ── LIVE CAMERA SCANNER MODAL ── */}
       {isScannerOpen && (
         <LiveReceiptScanner
-          onClose={() => setIsScannerOpen(false)}
+          onClose={closeScanner}
           onVerified={(verifiedRes) => {
             setResult(verifiedRes);
-            setIsScannerOpen(false);
-            void loadHistory(range);
+            closeScanner();
+            applyVerificationInstant(verifiedRes, range);
           }}
           showToast={showToast}
         />
@@ -332,9 +456,26 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
 
       {/* ── TOP HEADER & DATE FILTER ── */}
       <div className="cf-vp-topbar">
-        <div className="cf-vp-brand-pill">
-          <span>⚡</span>
-          <span>{user.fullName.split(" ")[0]}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {onBack && (
+            <button
+              type="button"
+              className="cf-vp-date-btn"
+              style={{ padding: "7px 11px" }}
+              onClick={() => {
+                haptic("selection");
+                onBack();
+              }}
+              aria-label="Go back"
+            >
+              <span>‹</span>
+              <span>Back</span>
+            </button>
+          )}
+          <div className="cf-vp-brand-pill">
+            <span>⚡</span>
+            <span>{user.fullName.split(" ")[0]}</span>
+          </div>
         </div>
 
         <div className="cf-vp-top-actions">
@@ -503,7 +644,7 @@ export default function VerifyPaymentScreen({ user, showToast, onLogout }: Verif
             className="cf-vp-take-btn"
             onClick={() => {
               haptic("selection");
-              setIsScannerOpen(true);
+              openScanner();
             }}
           >
             <svg
