@@ -16,7 +16,6 @@ interface LiveReceiptScannerProps {
 }
 
 type ScannerStep = "camera" | "preview" | "verifying";
-type FrameShape = "screenshot" | "tall" | "wide";
 type QualityState = "idle" | "dark" | "moving" | "blurry" | "sharp";
 type VerifyStage = "reading" | "checking_bank" | "done";
 type CameraFallbackReason = "denied" | "unavailable" | "unsupported" | null;
@@ -35,40 +34,8 @@ interface ExtendedConstraintSet extends MediaTrackConstraintSet {
   pointsOfInterest?: Array<{ x: number; y: number }>;
 }
 
-interface BoxDims {
-  width: number;
-  height: number;
-}
-
-const STORAGE_SHAPE_KEY = "cf_scanner_frame_shape";
 const STORAGE_AUTO_KEY = "cf_scanner_auto_capture";
 const DEFAULT_TIP = "Make sure the receipt is flat, well lit and all text is clear.";
-
-function parseSavedShape(): FrameShape {
-  if (typeof window === "undefined") return "screenshot";
-  const saved = localStorage.getItem(STORAGE_SHAPE_KEY);
-  if (saved === "tall" || saved === "wide" || saved === "screenshot") return saved;
-  return "screenshot";
-}
-
-function getTargetAspect(shape: FrameShape): number {
-  if (shape === "tall") return 1 / 2.25; // ~1:2.25 narrow tall paper receipt
-  if (shape === "wide") return 4 / 3;    // 4:3 small slip / landscape document
-  return 9 / 19;                         // ~9:19 modern phone screenshot (default)
-}
-
-function fitAspectBox(maxW: number, maxH: number, ratio: number): BoxDims {
-  const safeW = Math.max(120, maxW);
-  const safeH = Math.max(120, maxH);
-  if (safeW / safeH > ratio) {
-    const height = Math.floor(safeH);
-    const width = Math.max(90, Math.floor(height * ratio));
-    return { width, height };
-  }
-  const width = Math.floor(safeW);
-  const height = Math.max(90, Math.floor(width / ratio));
-  return { width, height };
-}
 
 export default function LiveReceiptScanner({
   onClose,
@@ -77,23 +44,14 @@ export default function LiveReceiptScanner({
 }: LiveReceiptScannerProps) {
   const [step, setStep] = useState<ScannerStep>("camera");
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
-<<<<<<< HEAD
-  const [provider, setProvider] = useState<string>(initialProvider);
-=======
-  const [cameraError, setCameraError] = useState<string | null>(null);
->>>>>>> e5c75ea (update the live receipt)
-
-  const [frameShape, setFrameShape] = useState<FrameShape>(parseSavedShape);
   const [autoCapture, setAutoCapture] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(STORAGE_AUTO_KEY) === "1";
   });
 
-  // Dynamically computed layout dimensions so frame fills available space with 0 overlap
+  // Dynamic open corridor bounds between top bar and bottom dock
   const [stageBounds, setStageBounds] = useState<{ top: number; bottom: number }>({ top: 64, bottom: 132 });
-  const [frameDims, setFrameDims] = useState<BoxDims>({ width: 310, height: 640 });
   const [previewBounds, setPreviewBounds] = useState<{ top: number; bottom: number }>({ top: 64, bottom: 90 });
-  const [previewDims, setPreviewDims] = useState<BoxDims>({ width: 320, height: 660 });
 
   // Camera capabilities & live status
   const [isStarting, setIsStarting] = useState<boolean>(true);
@@ -131,22 +89,18 @@ export default function LiveReceiptScanner({
   const previewTopRef = useRef<HTMLDivElement | null>(null);
   const previewDockRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const frameRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
   const capsRef = useRef<ExtendedTrackCapabilities>({});
   const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
-  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   const attemptIdRef = useRef<number>(0);
   const previewUrlRef = useRef<string | null>(null);
   const stepRef = useRef<ScannerStep>("camera");
-  const shapeRef = useRef<FrameShape>(frameShape);
   const cameraReadyRef = useRef<boolean>(false);
   const isCapturingRef = useRef<boolean>(false);
   const isVerifyingRef = useRef<boolean>(false);
-  const pickingFileRef = useRef<boolean>(false);
   const processingFileRef = useRef<boolean>(false);
   const fallbackReasonRef = useRef<CameraFallbackReason>(null);
 
@@ -173,46 +127,36 @@ export default function LiveReceiptScanner({
 
   useEffect(() => { previewUrlRef.current = previewUrl; }, [previewUrl]);
   useEffect(() => { stepRef.current = step; }, [step]);
-  useEffect(() => { shapeRef.current = frameShape; }, [frameShape]);
   useEffect(() => { cameraReadyRef.current = cameraReady; }, [cameraReady]);
   useEffect(() => { fallbackReasonRef.current = fallbackReason; }, [fallbackReason]);
   useEffect(() => { flashOnRef.current = flashOn; }, [flashOn]);
   useEffect(() => { autoCaptureRef.current = autoCapture; }, [autoCapture]);
 
-  // ── Compute Real Available Screen Space for Frame & Preview ────────────────
+  // Keep camera & preview stages clear of top bars, docks, and notches
   const recomputeDimensions = useCallback(() => {
     const modalEl = modalRef.current;
     if (!modalEl) return;
     const modalRect = modalEl.getBoundingClientRect();
     if (modalRect.width <= 0 || modalRect.height <= 0) return;
 
-    const ratio = getTargetAspect(shapeRef.current);
-    const maxTargetW = Math.min(modalRect.width * 0.9, 560);
-
-    // Camera live stage bounds
     if (topBarRef.current && bottomHudRef.current) {
       const topRect = topBarRef.current.getBoundingClientRect();
       const hudRect = bottomHudRef.current.getBoundingClientRect();
-      const topOffset = Math.max(0, Math.round(topRect.bottom - modalRect.top));
-      const bottomOffset = Math.max(0, Math.round(modalRect.bottom - hudRect.top));
-      const availH = Math.max(120, hudRect.top - topRect.bottom - 30); // 24px top hint margin + 6px bottom buffer
-      const availW = Math.max(140, maxTargetW);
-
-      setStageBounds({ top: topOffset, bottom: bottomOffset });
-      setFrameDims(fitAspectBox(availW, availH, ratio));
+      if (topRect.height > 0 && hudRect.height > 0) {
+        const topOffset = Math.max(0, Math.round(topRect.bottom - modalRect.top));
+        const bottomOffset = Math.max(0, Math.round(modalRect.bottom - hudRect.top));
+        setStageBounds({ top: topOffset, bottom: bottomOffset });
+      }
     }
 
-    // Preview stage bounds (uses real preview bars so whole photo is never cut)
     if (previewTopRef.current && previewDockRef.current) {
       const pTopRect = previewTopRef.current.getBoundingClientRect();
       const pDockRect = previewDockRef.current.getBoundingClientRect();
-      const pTopOff = Math.max(0, Math.round(pTopRect.bottom - modalRect.top));
-      const pBotOff = Math.max(0, Math.round(modalRect.bottom - pDockRect.top));
-      const pAvailH = Math.max(120, pDockRect.top - pTopRect.bottom - 14);
-      const pAvailW = Math.max(140, Math.min(modalRect.width * 0.92, 580));
-
-      setPreviewBounds({ top: pTopOff, bottom: pBotOff });
-      setPreviewDims(fitAspectBox(pAvailW, pAvailH, ratio));
+      if (pTopRect.height > 0 && pDockRect.height > 0) {
+        const pTopOff = Math.max(0, Math.round(pTopRect.bottom - modalRect.top));
+        const pBotOff = Math.max(0, Math.round(modalRect.bottom - pDockRect.top));
+        setPreviewBounds({ top: pTopOff, bottom: pBotOff });
+      }
     }
   }, []);
 
@@ -237,7 +181,7 @@ export default function LiveReceiptScanner({
       window.removeEventListener("orientationchange", handleResize);
       observer?.disconnect();
     };
-  }, [frameShape, step, supportsZoom, fallbackReason, recomputeDimensions]);
+  }, [step, supportsZoom, fallbackReason, recomputeDimensions]);
 
   const clearCapturedPhoto = useCallback(() => {
     if (previewUrlRef.current) {
@@ -247,7 +191,6 @@ export default function LiveReceiptScanner({
     setPreviewUrl(null);
     setCapturedFile(null);
     if (nativeCameraInputRef.current) nativeCameraInputRef.current.value = "";
-    if (galleryInputRef.current) galleryInputRef.current.value = "";
   }, []);
 
   const stopCamera = useCallback(() => {
@@ -378,9 +321,8 @@ export default function LiveReceiptScanner({
   }, []);
 
   const startCamera = useCallback(
-    async (mode: "environment" | "user", isCancelled?: () => boolean) => {
+    async (mode: "environment" | "user") => {
       stopCamera();
-<<<<<<< HEAD
       const attemptId = ++attemptIdRef.current;
 
       setFallbackReason(null);
@@ -388,11 +330,6 @@ export default function LiveReceiptScanner({
       setCameraReady(false);
       setQualityState("idle");
       setQualityText(DEFAULT_TIP);
-=======
-      await Promise.resolve();
-      if (isCancelled?.()) return;
-      setCameraError(null);
->>>>>>> e5c75ea (update the live receipt)
 
       if (
         typeof navigator === "undefined" ||
@@ -404,7 +341,7 @@ export default function LiveReceiptScanner({
         return;
       }
 
-      // Brief hardware settle delay prevents iOS NotReadableError when switching cameras
+      // Brief settle delay avoids iOS NotReadableError when rapidly switching cameras
       await new Promise((r) => setTimeout(r, 50));
       if (attemptId !== attemptIdRef.current) return;
 
@@ -414,11 +351,6 @@ export default function LiveReceiptScanner({
           stream.getTracks().forEach((t) => {
             try { t.stop(); } catch {}
           });
-          return;
-        }
-
-        if (isCancelled?.()) {
-          stream.getTracks().forEach((t) => t.stop());
           return;
         }
 
@@ -440,7 +372,6 @@ export default function LiveReceiptScanner({
         } catch {
           // Ignore iOS autoplay promise quirks when muted+playsInline is set
         }
-<<<<<<< HEAD
 
         const ready = await waitForVideoReady(video, attemptId);
         if (!ready || attemptId !== attemptIdRef.current) return;
@@ -476,18 +407,6 @@ export default function LiveReceiptScanner({
           setZoomVal(initialZ);
           currentZoomRef.current = initialZ;
           setSupportsZoom(true);
-=======
-      } catch (err: unknown) {
-        if (isCancelled?.()) return;
-        const error = err as Error;
-        console.warn("Live camera start failed:", error);
-        if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-          setCameraError(
-            "Camera permission was denied. Please allow camera access in your settings, or use the native camera option below."
-          );
-        } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-          setCameraError("No camera device was found on this phone.");
->>>>>>> e5c75ea (update the live receipt)
         } else {
           setSupportsZoom(false);
         }
@@ -514,112 +433,22 @@ export default function LiveReceiptScanner({
     [acquireCameraStream, recomputeDimensions, stopCamera, waitForVideoReady]
   );
 
-<<<<<<< HEAD
   const handleClose = useCallback(() => {
     if (isVerifyingRef.current) return;
     if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
-=======
-  // Initialize camera on mount and when facing mode changes (if in camera step)
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    if (step === "camera") {
-      timer = setTimeout(() => {
-        void startCamera(facingMode, () => cancelled);
-      }, 0);
-    }
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      stopCamera();
-    };
-  }, [step, facingMode, startCamera, stopCamera]);
-
-  // Clean up preview URL on unmount
-  useEffect(() => {
-    return () => {
-      stopCamera();
-      if (previewUrlRef.current) {
-        URL.revokeObjectURL(previewUrlRef.current);
-        previewUrlRef.current = null;
-      }
-    };
-  }, [stopCamera]);
-
-  // Switch camera front/back
-  const handleSwitchCamera = () => {
-    haptic("selection");
-    setFacingMode((prev) => (prev === "environment" ? "user" : "environment"));
-  };
-
-  // Close scanner and cleanup
-  const handleClose = () => {
->>>>>>> e5c75ea (update the live receipt)
     haptic("light");
     stopCamera();
     clearCapturedPhoto();
     onClose();
   }, [clearCapturedPhoto, onClose, stopCamera]);
 
-  // Expand Telegram WebApp, hook BackButton, and handle background/visibility cleanup
+  // Expand Telegram WebApp, hook BackButton, start camera asynchronously, and pause on background
   useEffect(() => {
     const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
     try { tg?.expand?.(); } catch {}
 
-    const hasLiveCam =
-      typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices) &&
-      typeof navigator.mediaDevices.getUserMedia === "function";
-
-    if (!hasLiveCam && galleryInputRef.current) {
-      pickingFileRef.current = true;
-      try { galleryInputRef.current.click(); } catch { pickingFileRef.current = false; }
-    }
-
-<<<<<<< HEAD
     const startTimer = setTimeout(() => {
-=======
-    haptic("medium");
-
-    try {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Could not create canvas context");
-
-      // Draw the video frame
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      // Stop camera tracks right away to save battery & release hardware
-      stopCamera();
-
-      // Convert to blob
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92)
-      );
-
-      if (!blob) throw new Error("Could not capture photo");
-
-      // Compress client-side to max 1400px / 0.85 quality
-      const compressed = await compressReceiptImage(blob, {
-        maxDimension: 1400,
-        quality: 0.85,
-        fileName: `receipt_live_${Date.now()}.jpg`,
-      });
-
-      // Set preview
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const url = URL.createObjectURL(compressed);
-      setPreviewUrl(url);
-      setCapturedFile(compressed);
-      setStep("preview");
-    } catch (err: unknown) {
-      console.error("Capture error:", err);
-      showToast("Failed to capture image. Please try again.", "error");
-      // Restart camera
->>>>>>> e5c75ea (update the live receipt)
-      startCamera(facingMode);
+      void startCamera(facingMode);
     }, 0);
 
     const backHandler = () => handleClose();
@@ -642,7 +471,6 @@ export default function LiveReceiptScanner({
       }
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
       resumeTimerRef.current = setTimeout(() => {
-        pickingFileRef.current = false;
         if (
           stepRef.current === "camera" &&
           !isVerifyingRef.current &&
@@ -651,7 +479,7 @@ export default function LiveReceiptScanner({
           !fallbackReasonRef.current
         ) {
           if (typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function") {
-            startCamera(facingMode);
+            void startCamera(facingMode);
           }
         }
       }, 320);
@@ -684,7 +512,7 @@ export default function LiveReceiptScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Capture photo (single-pass crop to frame + 3% margin, <= 1400px wide & <= 2600px tall, JPEG 0.85)
+  // Capture full visible camera view (<= 1400px wide, <= 2600px tall, JPEG 0.85)
   const handleCapture = useCallback(
     async (fromAuto = false) => {
       if (!cameraReadyRef.current || isCapturingRef.current || isVerifyingRef.current) return;
@@ -706,20 +534,20 @@ export default function LiveReceiptScanner({
 
       flashBeforePreviewRef.current = flashOnRef.current;
       if (flashOnRef.current) {
-        setTorch(false);
+        void setTorch(false);
       }
 
       try {
-        const compressed = await cropAndCompressVideoFrame(video, frameRef.current, {
+        const compressed = await cropAndCompressVideoFrame(video, video, {
           maxWidth: 1400,
           maxHeight: 2600,
-          bleedRatio: 0.03,
+          bleedRatio: 0,
           quality: 0.85,
           mirrored: facingMode === "user",
         });
 
         if (!compressed) {
-          showToast("Could not capture frame, please try again.", "error");
+          showToast("Could not capture photo, please try again.", "error");
           return;
         }
 
@@ -728,7 +556,7 @@ export default function LiveReceiptScanner({
         previewUrlRef.current = url;
         setPreviewUrl(url);
         setCapturedFile(compressed);
-        // Keep stream open behind preview so Retake returns instantaneously
+        // Keep stream active behind preview for instant Retake
         setStep("preview");
       } catch {
         showToast("Failed to capture photo. Please try again.", "error");
@@ -739,7 +567,7 @@ export default function LiveReceiptScanner({
     [facingMode, setTorch, showToast]
   );
 
-  // Live blur / motion / brightness analyzer strictly inside the active frame area
+  // Live blur / motion / exposure analyzer over central visible stage corridor
   useEffect(() => {
     if (step !== "camera" || !cameraReady || fallbackReason) return;
 
@@ -748,12 +576,18 @@ export default function LiveReceiptScanner({
       const video = videoRef.current;
       if (!video || !video.videoWidth || video.readyState < 2) return;
 
-      const crop = computeVideoFrameCrop(video, frameRef.current, 0, facingMode === "user");
+      // Negative bleedRatio insets by 8% per edge inside the visible stage between top bar and dock
+      const crop = computeVideoFrameCrop(
+        video,
+        stageRef.current || video,
+        stageRef.current ? -0.08 : 0,
+        facingMode === "user"
+      );
       if (!crop) return;
 
-      const shape = shapeRef.current;
-      const W = shape === "wide" ? 192 : shape === "tall" ? 120 : 128;
-      const H = shape === "wide" ? 144 : shape === "tall" ? 264 : 256;
+      const isPortraitCrop = crop.sh >= crop.sw;
+      const W = isPortraitCrop ? 160 : 224;
+      const H = isPortraitCrop ? 224 : 160;
 
       if (
         !analysisCanvasRef.current ||
@@ -843,7 +677,7 @@ export default function LiveReceiptScanner({
         autoSharpSinceRef.current = 0;
         setAutoProgress(0);
         setQualityState("moving");
-        setQualityText("Hold steady inside the frame");
+        setQualityText("Hold camera steady");
       } else if (isSharp) {
         const now = Date.now();
         setQualityState("sharp");
@@ -855,7 +689,7 @@ export default function LiveReceiptScanner({
           if (elapsed >= 1000) {
             autoSharpSinceRef.current = 0;
             setAutoProgress(0);
-            handleCapture(true);
+            void handleCapture(true);
           }
         } else {
           setAutoProgress(0);
@@ -942,18 +776,7 @@ export default function LiveReceiptScanner({
     haptic("selection");
     const next = facingMode === "environment" ? "user" : "environment";
     setFacingMode(next);
-    startCamera(next);
-  };
-
-  const handleChangeFrameShape = (shape: FrameShape) => {
-    haptic("selection");
-    shapeRef.current = shape;
-    setFrameShape(shape);
-    if (typeof window !== "undefined") localStorage.setItem(STORAGE_SHAPE_KEY, shape);
-    prevLumaRef.current = null;
-    autoSharpSinceRef.current = 0;
-    setAutoProgress(0);
-    recomputeDimensions();
+    void startCamera(next);
   };
 
   const handleToggleAuto = () => {
@@ -965,14 +788,7 @@ export default function LiveReceiptScanner({
     if (typeof window !== "undefined") localStorage.setItem(STORAGE_AUTO_KEY, next ? "1" : "0");
   };
 
-  const handleSelectProvider = (p: string) => {
-    haptic("selection");
-    setProvider(p);
-    onProviderChange?.(p);
-  };
-
   const handleNativeFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    pickingFileRef.current = false;
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1003,7 +819,7 @@ export default function LiveReceiptScanner({
     }
   };
 
-  // Instant Retake (reuses live camera stream with zero hardware reload lag)
+  // Instant Retake (reuses live camera stream when available)
   const handleRetake = () => {
     if (isVerifyingRef.current) return;
     haptic("light");
@@ -1021,15 +837,15 @@ export default function LiveReceiptScanner({
       setIsStarting(false);
       setCameraReady(true);
       if (flashBeforePreviewRef.current && supportsTorch) {
-        setTorch(true);
+        void setTorch(true);
       }
       requestAnimationFrame(() => recomputeDimensions());
     } else {
-      startCamera(facingMode);
+      void startCamera(facingMode);
     }
   };
 
-  // Verify captured photo with step-by-step backend streaming + immediate cleanup
+  // Verify captured photo (auto-detects CBE & Telebirr on backend)
   const handleVerify = async () => {
     if (isVerifyingRef.current) return;
     if (!capturedFile) {
@@ -1055,19 +871,12 @@ export default function LiveReceiptScanner({
     }, 1800);
 
     try {
-<<<<<<< HEAD
-      const res = await verifyImageWithProgress(fileToUpload, undefined, provider, (stage) => {
+      const res = await verifyImageWithProgress(fileToUpload, undefined, undefined, (stage) => {
         if (stage === "checking_bank") {
           reachedBank = true;
           setVerifyStage("checking_bank");
         }
       });
-=======
-      // Auto-detect CBE & Telebirr on the backend without forcing provider
-      const res = await verifyImage(capturedFile);
-      setResult(res);
-      setStep("result");
->>>>>>> e5c75ea (update the live receipt)
 
       clearTimeout(fallbackTimer);
       setVerifyStage("done");
@@ -1104,13 +913,6 @@ export default function LiveReceiptScanner({
         style={{ display: "none" }}
         onChange={handleNativeFileChange}
       />
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: "none" }}
-        onChange={handleNativeFileChange}
-      />
 
       {/* ── 1. LIVE CAMERA VIEW (kept mounted while in preview for 0ms Retake) ── */}
       <div className="cf-sc-view" style={{ display: step === "camera" ? "flex" : "none" }}>
@@ -1122,7 +924,6 @@ export default function LiveReceiptScanner({
           className={`cf-sc-video ${facingMode === "user" ? "mirrored" : ""}`}
         />
 
-<<<<<<< HEAD
         <div className={`cf-sc-flash ${shutterFlash ? "active" : ""}`} onAnimationEnd={() => setShutterFlash(false)} />
 
         {focusPoint && (
@@ -1145,18 +946,7 @@ export default function LiveReceiptScanner({
 
           <div className="cf-sc-top-center">
             <div className="cf-sc-top-title">Verify Payment</div>
-            <div className="cf-sc-pill-group" role="group" aria-label="Bank provider">
-              {(["CBE", "TELEBIRR"] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
-                  onClick={() => handleSelectProvider(p)}
-                >
-                  {p === "CBE" ? "CBE" : "Telebirr"}
-                </button>
-              ))}
-            </div>
+            <div className="cf-sc-top-subtitle">Point camera at receipt</div>
           </div>
 
           <div className="cf-sc-top-right">
@@ -1182,7 +972,7 @@ export default function LiveReceiptScanner({
                 className={`cf-sc-icon-btn ${flashOn ? "is-on" : ""}`}
                 onClick={() => {
                   haptic("selection");
-                  setTorch(!flashOn);
+                  void setTorch(!flashOn);
                 }}
                 aria-label="Toggle flash"
                 aria-pressed={flashOn}
@@ -1194,21 +984,9 @@ export default function LiveReceiptScanner({
               </button>
             )}
           </div>
-=======
-        {/* Center: Clean Title (auto-detects CBE & Telebirr) */}
-        <div style={{ textAlign: "center", pointerEvents: "none" }}>
-          <div style={{ fontSize: "16px", fontWeight: 700, lineHeight: 1.15, color: "#ffffff" }}>
-            {step === "preview" ? "Check Receipt Photo" : "Verify Payment"}
-          </div>
-          {step === "camera" && (
-            <div style={{ fontSize: "12px", fontWeight: 500, color: "rgba(255, 255, 255, 0.72)", marginTop: "2px" }}>
-              Point camera at receipt
-            </div>
-          )}
->>>>>>> e5c75ea (update the live receipt)
         </div>
 
-        {/* Center Stage: Open Camera Corridor Between Top & Bottom Bars */}
+        {/* Center Stage: Open Fullscreen Camera View Between Top & Bottom HUD */}
         <div
           ref={stageRef}
           className="cf-sc-stage"
@@ -1263,35 +1041,21 @@ export default function LiveReceiptScanner({
                 {fallbackReason === "denied" ? "🔒" : "📷"}
               </div>
               <h3 style={{ fontSize: "18px", fontWeight: 800, marginBottom: "8px" }}>
-                {fallbackReason === "denied" ? "Camera Permission Blocked" : "Use Phone Camera or Photo"}
+                {fallbackReason === "denied" ? "Camera Permission Blocked" : "Use Phone Camera"}
               </h3>
               <p style={{ fontSize: "13px", color: "#8e8e93", lineHeight: 1.45 }}>
                 {fallbackReason === "denied"
-                  ? "To scan receipts live, allow Camera access for Telegram in your phone Settings (or site permissions) and tap Try Again — or pick a photo right now."
-                  : "Live camera preview is not available in this window. Take a photo with your camera app or choose a receipt screenshot below."}
+                  ? "Allow Camera access in your phone or site settings and tap Try Again, or use your device camera below."
+                  : "Live camera preview is unavailable here. Tap below to take a photo with your phone camera."}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "16px" }}>
                 <button
                   type="button"
                   className="btn btn-primary"
                   style={{ minHeight: "48px" }}
-                  onClick={() => {
-                    pickingFileRef.current = true;
-                    nativeCameraInputRef.current?.click();
-                  }}
+                  onClick={() => nativeCameraInputRef.current?.click()}
                 >
                   📸 Take Photo with Camera
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ minHeight: "48px" }}
-                  onClick={() => {
-                    pickingFileRef.current = true;
-                    galleryInputRef.current?.click();
-                  }}
-                >
-                  🖼️ Choose from Photos
                 </button>
                 {fallbackReason !== "unsupported" && (
                   <button
@@ -1300,7 +1064,7 @@ export default function LiveReceiptScanner({
                     style={{ minHeight: "48px" }}
                     onClick={() => {
                       haptic("selection");
-                      startCamera(facingMode);
+                      void startCamera(facingMode);
                     }}
                   >
                     🔄 Try Live Camera Again
@@ -1310,63 +1074,13 @@ export default function LiveReceiptScanner({
             </div>
           ) : (
             <>
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
-              <video
-                ref={videoRef}
-                playsInline
-                autoPlay
-                muted
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                }}
-              />
+              {isStarting && (
+                <div className="cf-sc-starting">
+                  <div className="cf-sc-spinner" />
+                  <span>Starting camera...</span>
+                </div>
+              )}
 
-              {/* Clean Tip Pill above Bottom Shutter */}
->>>>>>> e5c75ea (update the live receipt)
->>>>>>> dbc4981 (update the live receipt and frontend screens)
-              <div
-                ref={frameRef}
-                className={`cf-sc-frame ${
-                  qualityState === "sharp"
-                    ? "is-sharp"
-                    : qualityState === "dark" || qualityState === "moving"
-                    ? "is-warn"
-                    : ""
-                }`}
-                style={{
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> dbc4981 (update the live receipt and frontend screens)
-                  width: `${frameDims.width}px`,
-                  height: `${frameDims.height}px`,
-                  marginTop: "16px",
-                }}
-              >
-                {/* Hint sits just above the top border without squeezing the frame */}
-                <div className="cf-sc-hint-above">Fit the whole receipt inside the frame</div>
-
-                <div className="cf-sc-corner tl" />
-                <div className="cf-sc-corner tr" />
-                <div className="cf-sc-corner bl" />
-                <div className="cf-sc-corner br" />
-
-                {isStarting && (
-                  <div className="cf-sc-starting">
-                    <div className="cf-sc-spinner" />
-                    <span>Starting camera...</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Live light & sharpness pill anchored inside bottom of stage */}
               {!isStarting && (
                 <div
                   className={`cf-sc-tip-pill ${
@@ -1385,84 +1099,11 @@ export default function LiveReceiptScanner({
                   <span>{qualityText}</span>
                 </div>
               )}
-=======
-                  position: "absolute",
-                  bottom: "calc(126px + env(safe-area-inset-bottom, 0px))",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  background: "rgba(16, 22, 32, 0.82)",
-                  backdropFilter: "blur(10px)",
-                  padding: "7px 14px",
-                  borderRadius: "999px",
-                  border: "1px solid rgba(255, 255, 255, 0.16)",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: "rgba(255, 255, 255, 0.94)",
-                  textAlign: "center",
-                  whiteSpace: "nowrap",
-                  maxWidth: "88vw",
-                  pointerEvents: "none",
-                  zIndex: 15,
-                }}
-              >
-                Make sure the receipt is flat, well lit and all text is clear.
-              </div>
-
-              {/* Bottom Camera Controls Bar */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  padding: "24px 20px",
-                  paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%)",
-                  zIndex: 20,
-                }}
-              >
-                {/* Big Shutter Button */}
-                <button
-                  type="button"
-                  onClick={handleCapture}
-                  aria-label="Capture photo"
-                  style={{
-                    width: "76px",
-                    height: "76px",
-                    borderRadius: "50%",
-                    border: "4px solid #ffffff",
-                    background: "transparent",
-                    padding: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    transition: "transform 0.1s ease",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      borderRadius: "50%",
-                      background: "#ffffff",
-                    }}
-                  />
-                </button>
-              </div>
->>>>>>> e5c75ea (update the live receipt)
             </>
           )}
         </div>
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> dbc4981 (update the live receipt and frontend screens)
-        {/* Combined Bottom HUD: Shape Bar + Optional Zoom + Dark Dock */}
+        {/* Bottom HUD: Optional Zoom + Auto Toggle + Cancel / Capture / Verify */}
         {!fallbackReason && (
           <div ref={bottomHudRef} className="cf-sc-bottom-hud">
             {supportsZoom && (
@@ -1481,284 +1122,10 @@ export default function LiveReceiptScanner({
                 <span style={{ fontSize: "11px", fontWeight: 700, minWidth: "32px", textAlign: "right" }}>
                   {zoomVal.toFixed(1)}x
                 </span>
-<<<<<<< HEAD
-=======
-=======
-      {/* ── 2. PREVIEW SCREEN (Retake / Verify) ── */}
-      {step === "preview" && previewUrl && (
-        <div
-          style={{
-            flex: 1,
-            position: "relative",
-            display: "flex",
-            flexDirection: "column",
-            background: "#000000",
-            overflow: "hidden",
-          }}
-        >
-          {/* Image Preview Container */}
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "16px",
-              paddingTop: "70px",
-              paddingBottom: "110px",
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={previewUrl}
-              alt="Receipt preview"
-              style={{
-                maxWidth: "100%",
-                maxHeight: "100%",
-                objectFit: "contain",
-                borderRadius: "16px",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
-                border: "1px solid rgba(255,255,255,0.15)",
-              }}
-            />
-          </div>
-
-          {/* Action Buttons: Retake & Verify */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              padding: "20px",
-              paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
-              background: "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0) 100%)",
-              display: "flex",
-              gap: "12px",
-              zIndex: 20,
-            }}
-          >
-            <button
-              type="button"
-              onClick={handleRetake}
-              disabled={loading}
-              style={{
-                flex: 1,
-                padding: "15px",
-                borderRadius: "14px",
-                background: "rgba(44, 44, 46, 0.9)",
-                backdropFilter: "blur(12px)",
-                border: "1px solid rgba(255, 255, 255, 0.15)",
-                color: "#ffffff",
-                fontSize: "16px",
-                fontWeight: 600,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-              }}
-            >
-              <span>🔄</span> Retake
-            </button>
-
-            <button
-              type="button"
-              onClick={handleVerify}
-              disabled={loading}
-              style={{
-                flex: 2,
-                padding: "15px",
-                borderRadius: "14px",
-                background: "#0a84ff",
-                border: "none",
-                color: "#ffffff",
-                fontSize: "16px",
-                fontWeight: 700,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                boxShadow: "0 4px 16px rgba(10, 132, 255, 0.4)",
-              }}
-            >
-              <span>⚡</span> Verify Receipt
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── 3. VERIFYING LOADING OVERLAY ── */}
-      {step === "verifying" && (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "32px",
-            textAlign: "center",
-            background: "#000000",
-            zIndex: 30,
-          }}
-        >
-          <div
-            style={{
-              width: "60px",
-              height: "60px",
-              border: "4px solid rgba(10, 132, 255, 0.2)",
-              borderTopColor: "#0a84ff",
-              borderRadius: "50%",
-              animation: "spin 0.8s linear infinite",
-              marginBottom: "24px",
-            }}
-          />
-          <h2 style={{ fontSize: "20px", fontWeight: 700, marginBottom: "8px" }}>
-            Checking your receipt...
-          </h2>
-          <p style={{ fontSize: "14px", color: "rgba(255,255,255,0.7)", maxWidth: "280px" }}>
-            Reading QR code, reference numbers, and validating with bank records.
-          </p>
-        </div>
-      )}
-
-      {/* ── 4. RESULT SCREEN ── */}
-      {step === "result" && result && (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            padding: "20px",
-            paddingTop: "76px",
-            paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
-            overflowY: "auto",
-            background: "var(--tg-theme-bg-color, #1c1c1e)",
-          }}
-        >
-          {/* Result Card */}
-          <div
-            style={{
-              padding: "24px 20px",
-              borderRadius: "18px",
-              border:
-                result.status === "VERIFIED"
-                  ? "2px solid #30d158"
-                  : result.status === "FLAGGED_DUPLICATE"
-                  ? "2px solid #ff453a"
-                  : result.status === "AMOUNT_MISMATCH"
-                  ? "2px solid #ffd60a"
-                  : "2px solid #ff453a",
-              background:
-                result.status === "VERIFIED"
-                  ? "rgba(48, 209, 88, 0.12)"
-                  : result.status === "FLAGGED_DUPLICATE"
-                  ? "rgba(255, 69, 58, 0.12)"
-                  : result.status === "AMOUNT_MISMATCH"
-                  ? "rgba(255, 214, 10, 0.12)"
-                  : "rgba(255, 69, 58, 0.12)",
-              marginBottom: "16px",
-            }}
-          >
-            {/* Header with big Icon */}
-            <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" }}>
-              <div
-                style={{
-                  width: "52px",
-                  height: "52px",
-                  borderRadius: "50%",
-                  background:
-                    result.status === "VERIFIED"
-                      ? "#30d158"
-                      : result.status === "FLAGGED_DUPLICATE"
-                      ? "#ff453a"
-                      : result.status === "AMOUNT_MISMATCH"
-                      ? "#ffd60a"
-                      : "#ff453a",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "26px",
-                  color: result.status === "AMOUNT_MISMATCH" ? "#000000" : "#ffffff",
-                  flexShrink: 0,
-                }}
-              >
-                {result.status === "VERIFIED"
-                  ? "✓"
-                  : result.status === "FLAGGED_DUPLICATE"
-                  ? "✕"
-                  : result.status === "AMOUNT_MISMATCH"
-                  ? "!"
-                  : "✕"}
-              </div>
-
-              <div>
-                <h3 style={{ fontSize: "20px", fontWeight: 800, margin: 0 }}>
-                  {result.status === "VERIFIED"
-                    ? "Payment Verified!"
-                    : result.status === "FLAGGED_DUPLICATE"
-                    ? "Duplicate Payment!"
-                    : result.status === "AMOUNT_MISMATCH"
-                    ? "Amount Mismatch"
-                    : "Could Not Verify Receipt"}
-                </h3>
-                <p style={{ fontSize: "13px", color: "var(--tg-theme-hint-color, #8e8e93)", marginTop: "4px" }}>
-                  {result.status === "VERIFIED"
-                    ? "Legitimate transaction confirmed by bank."
-                    : result.status === "FLAGGED_DUPLICATE"
-                    ? "Warning: This receipt was already verified! Do not release items."
-                    : result.status === "AMOUNT_MISMATCH"
-                    ? "Amount on receipt does not match expected payment."
-                    : result.message || "Could not confirm this receipt."}
-                </p>
-              </div>
-            </div>
-
-            {/* Helpful hint for blurry or unreadable photos */}
-            {isUnreadable && (
-              <div
-                style={{
-                  background: "rgba(255, 214, 10, 0.15)",
-                  border: "1px solid rgba(255, 214, 10, 0.3)",
-                  borderRadius: "12px",
-                  padding: "12px 14px",
-                  margin: "14px 0",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "10px",
-                }}
-              >
-                <span style={{ fontSize: "18px" }}>💡</span>
-                <div style={{ fontSize: "13px", color: "#ffd60a", lineHeight: 1.4 }}>
-                  <strong>Tip for camera scans:</strong> Hold steady, use good light, and keep receipt clear.
-                </div>
->>>>>>> e5c75ea (update the live receipt)
->>>>>>> dbc4981 (update the live receipt and frontend screens)
               </div>
             )}
 
             <div className="cf-sc-toolbar">
-              <div className="cf-sc-pill-group" role="group" aria-label="Frame shape">
-                {(
-                  [
-                    { id: "screenshot", label: "Screenshot" },
-                    { id: "tall", label: "Tall receipt" },
-                    { id: "wide", label: "Wide" },
-                  ] as const
-                ).map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`cf-sc-seg-btn subtle ${frameShape === s.id ? "active" : ""}`}
-                    onClick={() => handleChangeFrameShape(s.id)}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-
               <button
                 type="button"
                 className={`cf-sc-mini-pill ${autoCapture ? "active" : ""}`}
@@ -1766,18 +1133,6 @@ export default function LiveReceiptScanner({
                 aria-pressed={autoCapture}
               >
                 {autoCapture ? "Auto: ON" : "Auto"}
-              </button>
-
-              <button
-                type="button"
-                className="cf-sc-mini-pill"
-                onClick={() => {
-                  pickingFileRef.current = true;
-                  galleryInputRef.current?.click();
-                }}
-                aria-label="Choose from photos"
-              >
-                🖼️
               </button>
             </div>
 
@@ -1797,7 +1152,7 @@ export default function LiveReceiptScanner({
                 className={`cf-sc-shutter ${qualityState === "sharp" ? "is-sharp" : ""} ${
                   pulseShutterHint ? "pulse-hint" : ""
                 }`}
-                onClick={() => handleCapture(false)}
+                onClick={() => void handleCapture(false)}
                 onAnimationEnd={() => setPulseShutterHint(false)}
                 disabled={!cameraReady}
                 aria-disabled={!cameraReady}
@@ -1851,7 +1206,7 @@ export default function LiveReceiptScanner({
         )}
       </div>
 
-      {/* ── 2. PREVIEW VIEW (Same Tall Frame, Entire Photo Visible) ── */}
+      {/* ── 2. CLEAN FULL PHOTO PREVIEW ── */}
       {step === "preview" && previewUrl && (
         <div className="cf-sc-view">
           <div ref={previewTopRef} className="cf-sc-top-bar">
@@ -1864,18 +1219,6 @@ export default function LiveReceiptScanner({
 
             <div className="cf-sc-top-center">
               <div className="cf-sc-top-title">Check Receipt Photo</div>
-              <div className="cf-sc-pill-group" role="group" aria-label="Bank provider">
-                {(["CBE", "TELEBIRR"] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className={`cf-sc-seg-btn ${provider === p ? "active" : ""}`}
-                    onClick={() => handleSelectProvider(p)}
-                  >
-                    {p === "CBE" ? "CBE" : "Telebirr"}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="cf-sc-top-right" />
@@ -1885,20 +1228,13 @@ export default function LiveReceiptScanner({
             className="cf-sc-preview-stage"
             style={{ top: `${previewBounds.top}px`, bottom: `${previewBounds.bottom}px` }}
           >
-            <div
-              className="cf-sc-preview-box"
-              style={{ width: `${previewDims.width}px`, height: `${previewDims.height}px` }}
-            >
+            <div className="cf-sc-preview-box">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewUrl}
                 alt="Captured receipt preview"
-                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                className="cf-sc-preview-img"
               />
-              <div className="cf-sc-corner tl" />
-              <div className="cf-sc-corner tr" />
-              <div className="cf-sc-corner bl" />
-              <div className="cf-sc-corner br" />
             </div>
           </div>
 
@@ -1915,7 +1251,7 @@ export default function LiveReceiptScanner({
             <button
               type="button"
               className="btn btn-primary"
-              onClick={handleVerify}
+              onClick={() => void handleVerify()}
               disabled={verifying}
               style={{ flex: 1.4, minHeight: "52px", borderRadius: "14px", fontSize: "16px" }}
             >

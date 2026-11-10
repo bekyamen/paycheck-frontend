@@ -773,6 +773,13 @@ a {
   line-height: 1.15;
   white-space: nowrap;
 }
+.cf-sc-top-subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.2;
+  white-space: nowrap;
+}
 
 .cf-sc-icon-btn {
   min-width: 48px;
@@ -905,57 +912,6 @@ a {
   border-color: #30d158;
   color: #70f091;
 }
-
-/* Guide Frame (exact dimensions computed dynamically from real open space) */
-.cf-sc-frame {
-  position: relative;
-  border-radius: 18px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  pointer-events: none;
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), height 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease;
-}
-.cf-sc-frame.is-sharp {
-  border-color: rgba(48, 209, 88, 0.45);
-}
-
-/* Floating hint right above top border — overlays dark area without squeezing frame */
-.cf-sc-hint-above {
-  position: absolute;
-  bottom: calc(100% + 5px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 3px 11px;
-  border-radius: 999px;
-  background: rgba(12, 16, 24, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.94);
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 16;
-}
-
-.cf-sc-corner {
-  position: absolute;
-  width: 34px;
-  height: 34px;
-  border-color: #0a84ff;
-  border-style: solid;
-  transition: border-color 0.2s ease;
-}
-.cf-sc-frame.is-sharp .cf-sc-corner { border-color: #30d158; }
-.cf-sc-frame.is-warn .cf-sc-corner { border-color: #ff9f0a; }
-.cf-sc-corner.tl { top: -2px; left: -2px; border-width: 4px 0 0 4px; border-top-left-radius: 18px; }
-.cf-sc-corner.tr { top: -2px; right: -2px; border-width: 4px 4px 0 0; border-top-right-radius: 18px; }
-.cf-sc-corner.bl { bottom: -2px; left: -2px; border-width: 0 0 4px 4px; border-bottom-left-radius: 18px; }
-.cf-sc-corner.br { bottom: -2px; right: -2px; border-width: 0 4px 4px 0; border-bottom-right-radius: 18px; }
 
 .cf-sc-starting {
   display: flex;
@@ -1196,13 +1152,20 @@ a {
 
 .cf-sc-preview-box {
   position: relative;
-  border-radius: 18px;
-  background: #0a0d14;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  overflow: hidden;
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.cf-sc-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 14px;
+  display: block;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
 }
 
@@ -1282,11 +1245,11 @@ a {
 @media (max-height: 500px) {
   .cf-sc-top-bar { padding-top: calc(4px + var(--sc-safe-top)); padding-bottom: 4px; }
   .cf-sc-top-title { font-size: 14px; }
+  .cf-sc-top-subtitle { font-size: 11px; }
   .cf-sc-bottom-hud { padding-top: 5px; padding-bottom: calc(6px + var(--sc-safe-bottom)); gap: 5px; }
   .cf-sc-shutter { width: 60px; height: 60px; }
   .cf-sc-dock-circle { width: 44px; height: 44px; }
   .cf-sc-dock-action { gap: 2px; font-size: 10.5px; }
-  .cf-sc-hint-above { font-size: 10.5px; padding: 2px 9px; }
   .cf-sc-tip-pill { bottom: 6px; padding: 5px 10px; font-size: 11px; }
 }
 
