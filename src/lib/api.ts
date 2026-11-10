@@ -380,3 +380,39 @@ export async function verifyImageWithProgress(
   }
   return data as VerificationResult;
 }
+
+export type VerificationHistoryRange = "today" | "week" | "month" | "all";
+
+export interface VerificationHistoryItem {
+  id: string;
+  provider: string;
+  txnReference: string;
+  amount: number;
+  expectedAmount: number | null;
+  payerName: string | null;
+  payerPhone: string | null;
+  receivingAccount: string | null;
+  status: string;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+export interface VerificationHistoryResponse {
+  range: VerificationHistoryRange;
+  summary: {
+    totalAmount: number;
+    totalCount: number;
+    byProvider: Record<string, { amount: number; count: number }>;
+  };
+  recent: VerificationHistoryItem[];
+}
+
+export function getVerificationHistory(
+  range: VerificationHistoryRange = "today",
+  limit = 15
+): Promise<VerificationHistoryResponse> {
+  return request(
+    "GET",
+    `/api/verify/history?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}`
+  );
+}
