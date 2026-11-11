@@ -722,7 +722,7 @@ export default function LiveReceiptScanner({
           }
         } else {
           setAutoProgress(0);
-          setQualityText("Looks sharp — tap camera button to capture");
+          setQualityText("Looks sharp — tap Take a picture");
         }
       } else {
         autoSharpSinceRef.current = 0;
@@ -975,7 +975,7 @@ export default function LiveReceiptScanner({
 
           <div className="cf-sc-top-center">
             <div className="cf-sc-top-title">Verify Payment</div>
-            <div className="cf-sc-top-subtitle">Point camera at receipt</div>
+            <div className="cf-sc-top-subtitle">Take a picture of your receipt</div>
           </div>
 
           <div className="cf-sc-top-right">
@@ -1176,39 +1176,42 @@ export default function LiveReceiptScanner({
                 <span>Cancel</span>
               </button>
 
-              <button
-                type="button"
-                className={`cf-sc-shutter ${qualityState === "sharp" ? "is-sharp" : ""} ${
-                  pulseShutterHint ? "pulse-hint" : ""
-                }`}
-                onClick={() => void handleCapture(false)}
-                onAnimationEnd={() => setPulseShutterHint(false)}
-                disabled={!cameraReady}
-                aria-disabled={!cameraReady}
-                aria-label="Capture receipt photo"
-              >
-                {autoCapture && (
-                  <svg className="cf-sc-auto-ring" viewBox="0 0 92 92">
-                    <circle
-                      cx="46"
-                      cy="46"
-                      r="42"
-                      fill="none"
-                      stroke="#30d158"
-                      strokeWidth="4"
-                      strokeLinecap="round"
-                      strokeDasharray={264}
-                      strokeDashoffset={dashOffset}
-                      style={{ transition: "stroke-dashoffset 0.12s linear" }}
-                    />
-                  </svg>
-                )}
-                <div className="cf-sc-shutter-inner">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-                  </svg>
-                </div>
-              </button>
+              <div className="cf-sc-dock-center">
+                <button
+                  type="button"
+                  className={`cf-sc-shutter ${qualityState === "sharp" ? "is-sharp" : ""} ${
+                    pulseShutterHint ? "pulse-hint" : ""
+                  }`}
+                  onClick={() => void handleCapture(false)}
+                  onAnimationEnd={() => setPulseShutterHint(false)}
+                  disabled={!cameraReady}
+                  aria-disabled={!cameraReady}
+                  aria-label="Take a picture"
+                >
+                  {autoCapture && (
+                    <svg className="cf-sc-auto-ring" viewBox="0 0 92 92">
+                      <circle
+                        cx="46"
+                        cy="46"
+                        r="42"
+                        fill="none"
+                        stroke="#30d158"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        strokeDasharray={264}
+                        strokeDashoffset={dashOffset}
+                        style={{ transition: "stroke-dashoffset 0.12s linear" }}
+                      />
+                    </svg>
+                  )}
+                  <div className="cf-sc-shutter-inner">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M9 3L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                    </svg>
+                  </div>
+                </button>
+                <span className="cf-sc-shutter-label">Take a picture</span>
+              </div>
 
               <button
                 type="button"
@@ -1218,7 +1221,7 @@ export default function LiveReceiptScanner({
                   haptic("light");
                   setPulseShutterHint(false);
                   requestAnimationFrame(() => setPulseShutterHint(true));
-                  showToast("Tap the blue camera button to take a photo first", "info");
+                  showToast("Tap Take a picture first", "info");
                 }}
                 aria-label="Verify after capture"
               >

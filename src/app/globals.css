@@ -75,7 +75,7 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--tg-theme-text-color);
 }
 
-p, span, label {
+p, label {
   color: var(--tg-theme-text-color);
 }
 
@@ -1031,9 +1031,24 @@ a {
   width: 100%;
   max-width: 390px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   padding: 0 10px;
+}
+
+.cf-sc-dock-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.cf-sc-shutter-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .cf-sc-dock-action {
@@ -1407,6 +1422,7 @@ a {
   border: none;
   background: #ffffff;
   color: #111827;
+  -webkit-text-fill-color: #111827;
   font-size: 16px;
   font-weight: 700;
   display: inline-flex;
@@ -1417,6 +1433,7 @@ a {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   transition: transform 0.14s ease, opacity 0.14s ease;
 }
+.cf-vp-take-btn span { color: #111827; -webkit-text-fill-color: #111827; }
 .cf-vp-take-btn:active { transform: scale(0.98); opacity: 0.92; }
 .cf-vp-upload-btn {
   width: 56px;
@@ -1433,6 +1450,101 @@ a {
 }
 .cf-vp-upload-btn:active { transform: scale(0.95); background: #253042; }
 .cf-vp-upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.cf-vp-staged-wrap {
+  margin-bottom: 18px;
+}
+.cf-vp-staged-wrap .cf-vp-cta-row {
+  align-items: center;
+  margin-bottom: 8px;
+}
+.cf-vp-thumb-box {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  flex-shrink: 0;
+}
+.cf-vp-thumb-card {
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.cf-vp-thumb-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cf-vp-thumb-pdf {
+  font-size: 12px;
+  font-weight: 800;
+  color: #dc2626;
+  letter-spacing: 0.4px;
+}
+.cf-vp-thumb-clear {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: #ef4444;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.cf-vp-thumb-clear:active { transform: scale(0.9); }
+.cf-vp-thumb-clear:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.cf-vp-verify-pill-btn {
+  flex: 1;
+  min-height: 54px;
+  border-radius: 16px;
+  border: none;
+  background: #ffffff;
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+.cf-vp-verify-pill-btn span { color: #111827; -webkit-text-fill-color: #111827; }
+.cf-vp-verify-pill-btn:active { transform: scale(0.98); opacity: 0.92; }
+.cf-vp-verify-pill-btn:disabled { opacity: 0.72; cursor: not-allowed; }
+
+.cf-vp-staged-note {
+  font-size: 13px;
+  color: #8c96a6;
+  line-height: 1.35;
+  padding-left: 2px;
+}
+
+.cf-vp-spinner-dark {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(17, 24, 39, 0.2);
+  border-top-color: #111827;
+  animation: spin 0.75s linear infinite;
+}
 
 .cf-vp-ref-card {
   background: #1b2330;

@@ -15,6 +15,7 @@ import {
   getVerificationHistory,
 } from "@/lib/api";
 import { compressReceiptImage } from "@/lib/imageCompressor";
+import { detectQrInReceiptFile } from "@/lib/qrClientDetector";
 import { haptic } from "@/lib/telegram";
 import LiveReceiptScanner from "@/components/ui/LiveReceiptScanner";
 
@@ -129,12 +130,26 @@ export default function VerifyPaymentScreen({
   const [recentItems, setRecentItems] = useState<VerificationHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
-  // Quick photo upload state
+  // Quick photo upload & staged gallery preview state
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null);
+  const [stagedCaption, setStagedCaption] = useState<string>("");
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const stagedPreviewUrlRef = useRef<string | null>(null);
+  const qrScanTokenRef = useRef<number>(0);
   const dateMenuRef = useRef<HTMLDivElement | null>(null);
   const recentItemsRef = useRef<VerificationHistoryItem[]>([]);
   const pendingLocalRef = useRef<VerificationHistoryItem[]>([]);
+
+  useEffect(() => {
+    return () => {
+      if (stagedPreviewUrlRef.current) {
+        URL.revokeObjectURL(stagedPreviewUrlRef.current);
+        stagedPreviewUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // Reference / SMS form state
   const [provider, setProvider] = useState<"CBE" | "TELEBIRR">("CBE");
@@ -301,26 +316,76 @@ export default function VerifyPaymentScreen({
     else haptic("error");
   }
 
+  function clearStagedGalleryFile() {
+    qrScanTokenRef.current += 1;
+    if (stagedPreviewUrlRef.current) {
+      URL.revokeObjectURL(stagedPreviewUrlRef.current);
+      stagedPreviewUrlRef.current = null;
+    }
+    setStagedFile(null);
+    setStagedPreviewUrl(null);
+    setStagedCaption("");
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
+  }
+
   async function handleQuickUploadChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    haptic("selection");
+    setResult(null);
+
+    if (stagedPreviewUrlRef.current) {
+      URL.revokeObjectURL(stagedPreviewUrlRef.current);
+      stagedPreviewUrlRef.current = null;
+    }
+
+    const isPdf = file.type === "application/pdf";
+    const previewUrl = isPdf ? null : URL.createObjectURL(file);
+    stagedPreviewUrlRef.current = previewUrl;
+
+    setStagedFile(file);
+    setStagedPreviewUrl(previewUrl);
+    setStagedCaption(isPdf ? "PDF receipt selected — tap Verify to check payment." : "Checking receipt for QR code…");
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
+
+    const token = ++qrScanTokenRef.current;
+    try {
+      const scan = await detectQrInReceiptFile(file, previewUrl || undefined);
+      if (qrScanTokenRef.current === token) {
+        setStagedCaption(scan.caption);
+      }
+    } catch {
+      if (qrScanTokenRef.current === token) {
+        setStagedCaption("Receipt selected — tap Verify to scan and check payment.");
+      }
+    }
+  }
+
+  async function handleVerifyStagedGallery() {
+    if (!stagedFile || uploadingImage) return;
+
+    haptic("selection");
     setUploadingImage(true);
     setResult(null);
-    showToast("Optimizing & verifying receipt...", "info");
+    showToast("Scanning & verifying receipt…", "info");
 
     try {
-      const compressed = await compressReceiptImage(file, {
-        maxDimension: 1400,
-        maxHeight: 2600,
-        quality: 0.85,
-        fileName: file.name,
-      });
+      const payload =
+        stagedFile.type === "application/pdf"
+          ? stagedFile
+          : await compressReceiptImage(stagedFile, {
+              maxDimension: 1400,
+              maxHeight: 2600,
+              quality: 0.85,
+              fileName: stagedFile.name,
+            });
 
-      const res = await verifyImageWithProgress(compressed);
+      const res = await verifyImageWithProgress(payload);
       setResult(res);
       handleResultHaptic(res.status);
       applyVerificationInstant(res, range);
+      clearStagedGalleryFile();
     } catch (err: unknown) {
       haptic("error");
       const msg = (err as Error).message || "Image verification failed";
@@ -328,7 +393,6 @@ export default function VerifyPaymentScreen({
       showToast(msg, "error");
     } finally {
       setUploadingImage(false);
-      if (uploadInputRef.current) uploadInputRef.current.value = "";
     }
   }
 
@@ -637,62 +701,111 @@ export default function VerifyPaymentScreen({
       </div>
 
       {/* ── PHOTO / SCAN ACTIONS ── */}
-      {tab === "photo" && (
-        <div className="cf-vp-cta-row">
-          <button
-            type="button"
-            className="cf-vp-take-btn"
-            onClick={() => {
-              haptic("selection");
-              openScanner();
-            }}
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#111827"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-              <circle cx="12" cy="13" r="4" />
-            </svg>
-            <span>Take a picture</span>
-          </button>
+      {tab === "photo" &&
+        (stagedFile ? (
+          <div className="cf-vp-staged-wrap">
+            <div className="cf-vp-cta-row">
+              <div className="cf-vp-thumb-box">
+                <div className="cf-vp-thumb-card">
+                  {stagedPreviewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={stagedPreviewUrl} alt="Selected receipt preview" />
+                  ) : (
+                    <span className="cf-vp-thumb-pdf">PDF</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="cf-vp-thumb-clear"
+                  disabled={uploadingImage}
+                  onClick={() => {
+                    haptic("selection");
+                    clearStagedGalleryFile();
+                  }}
+                  aria-label="Remove selected receipt"
+                  title="Remove receipt"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
 
-          <button
-            type="button"
-            className="cf-vp-upload-btn"
-            disabled={uploadingImage}
-            onClick={() => {
-              haptic("selection");
-              uploadInputRef.current?.click();
-            }}
-            aria-label="Upload receipt image or PDF"
-            title="Upload screenshot or photo"
-          >
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#e5a922"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ opacity: uploadingImage ? 0.45 : 1 }}
+              <button
+                type="button"
+                className="cf-vp-verify-pill-btn"
+                disabled={uploadingImage}
+                onClick={() => void handleVerifyStagedGallery()}
+              >
+                {uploadingImage ? (
+                  <>
+                    <span className="cf-vp-spinner-dark" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <span>Verify</span>
+                )}
+              </button>
+            </div>
+            {stagedCaption && <div className="cf-vp-staged-note">{stagedCaption}</div>}
+          </div>
+        ) : (
+          <div className="cf-vp-cta-row">
+            <button
+              type="button"
+              className="cf-vp-take-btn"
+              onClick={() => {
+                haptic("selection");
+                openScanner();
+              }}
             >
-              <rect x="3" y="5" width="14" height="14" rx="2.5" />
-              <circle cx="7.5" cy="9.5" r="1.2" fill="#e5a922" stroke="none" />
-              <path d="M4 17l4-4 3 3 2.5-2.5L17 17" />
-              <path d="M19 9V3m0 0l-2.5 2.5M19 3l2.5 2.5" />
-            </svg>
-          </button>
-        </div>
-      )}
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#111827"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+              <span>Take a picture</span>
+            </button>
+
+            <button
+              type="button"
+              className="cf-vp-upload-btn"
+              disabled={uploadingImage}
+              onClick={() => {
+                haptic("selection");
+                uploadInputRef.current?.click();
+              }}
+              aria-label="Upload receipt image or PDF"
+              title="Upload screenshot or photo"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#e5a922"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ opacity: uploadingImage ? 0.45 : 1 }}
+              >
+                <rect x="3" y="5" width="14" height="14" rx="2.5" />
+                <circle cx="7.5" cy="9.5" r="1.2" fill="#e5a922" stroke="none" />
+                <path d="M4 17l4-4 3 3 2.5-2.5L17 17" />
+                <path d="M19 9V3m0 0l-2.5 2.5M19 3l2.5 2.5" />
+              </svg>
+            </button>
+          </div>
+        ))}
 
       {/* ── REFERENCE / SMS PANEL ── */}
       {tab === "ref" && (
