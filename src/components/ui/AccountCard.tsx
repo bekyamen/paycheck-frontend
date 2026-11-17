@@ -1,6 +1,7 @@
 "use client";
 import { BankAccount } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
+import { BankLogo } from "@/components/ui/BankLogos";
 
 interface AccountCardProps {
   account: BankAccount;
@@ -28,10 +29,13 @@ export default function AccountCard({
       style={{ marginBottom: "10px" }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <p className="bank-name">{bankName}</p>
-          <p className="account-number">{formatted}</p>
-          <p className="holder-name">{accountHolderName}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <BankLogo bank={bankName} size={36} />
+          <div>
+            <p className="bank-name">{bankName}</p>
+            <p className="account-number">{formatted}</p>
+            <p className="holder-name">{accountHolderName}</p>
+          </div>
         </div>
         <span className={`badge ${isActive ? "badge-success" : "badge-inactive"}`}>
           {isActive ? "Active" : "Inactive"}

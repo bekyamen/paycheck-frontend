@@ -44,7 +44,12 @@ async function request<T>(
         msg = `${msg}: ${data.details}`;
       }
     }
-    throw new Error(msg);
+    const err = new Error(msg) as Error & { verificationResult?: unknown; statusCode?: number };
+    err.statusCode = res.status;
+    if (data && typeof data === "object" && "status" in data) {
+      err.verificationResult = data;
+    }
+    throw err;
   }
 
   return data as T;
@@ -247,12 +252,16 @@ export interface VerificationResult {
   provider?: string;
   txnReference?: string;
   amount?: number | string;
+  settledAmount?: number | string;
   expectedAmount?: number | string;
   payerName?: string;
   payerPhone?: string;
+  receiverName?: string;
   receivingAccount?: string;
+  transactionDate?: string;
   verifiedAt?: string;
   message?: string;
+  raw?: any;
 }
 
 export function verifyManual(payload: {
@@ -283,15 +292,118 @@ export async function verifyImage(file: File, expectedAmount?: number, provider?
   return verifyImageWithProgress(file, expectedAmount, provider);
 }
 
+/**
+ * Direct PayProof API Verification for TELEBIRR RECEIPTS ONLY.
+ */
+export async function verifyTelebirrReceiptPayProof(
+  file: File,
+  expectedAmount?: number,
+  onStage?: (stage: "reading" | "checking_bank") => void
+): Promise<VerificationResult> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append("images[]", file);
+  formData.append("receipt", file);
+  if (expectedAmount) {
+    formData.append("expectedAmount", expectedAmount.toString());
+  }
+  formData.append("provider", "TELEBIRR");
+
+  const useStream = Boolean(onStage);
+  const url = `${BASE_URL}/api/verify-receipt${useStream ? "?stream=1" : ""}`;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (useStream) headers.Accept = "application/x-ndjson";
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+  } catch {
+    throw new Error("Could not connect to the Telebirr verification server. Please check your internet connection.");
+  }
+
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+
+  if (useStream && contentType.includes("application/x-ndjson") && res.body && typeof res.body.getReader === "function") {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalHttpStatus = res.status;
+    let finalResult: VerificationResult | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const evt = JSON.parse(trimmed) as {
+            stage?: "reading" | "checking_bank";
+            done?: boolean;
+            httpStatus?: number;
+            result?: VerificationResult & { error?: string };
+          };
+          if (evt.stage && onStage) {
+            onStage(evt.stage);
+          } else if (evt.done && evt.result) {
+            finalHttpStatus = evt.httpStatus || 200;
+            finalResult = evt.result;
+          }
+        } catch {}
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const evt = JSON.parse(buffer.trim());
+        if (evt.done && evt.result) {
+          finalHttpStatus = evt.httpStatus || 200;
+          finalResult = evt.result;
+        }
+      } catch {}
+    }
+
+    if (!finalResult) {
+      throw new Error("Could not verify receipt right now. Please try again.");
+    }
+    const maybeErr = (finalResult as VerificationResult & { error?: string }).error;
+    if (!finalResult.status && (finalHttpStatus >= 400 || maybeErr)) {
+      throw new Error(maybeErr || finalResult.message || "Telebirr verification failed");
+    }
+    return finalResult;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !data?.status) {
+    throw new Error(data?.error || data?.message || "Telebirr verification failed");
+  }
+  return data as VerificationResult;
+}
+
 export async function verifyImageWithProgress(
   file: File,
   expectedAmount?: number,
   provider?: string,
   onStage?: (stage: "reading" | "checking_bank") => void
 ): Promise<VerificationResult> {
+  // If explicitly Telebirr, route through PayProof dedicated endpoint
+  if (provider && provider.toUpperCase() === "TELEBIRR") {
+    return verifyTelebirrReceiptPayProof(file, expectedAmount, onStage);
+  }
+
   const token = getToken();
   const formData = new FormData();
   formData.append("receipt", file);
+  formData.append("images[]", file);
   if (expectedAmount) {
     formData.append("expectedAmount", expectedAmount.toString());
   }

@@ -10,6 +10,7 @@ import {
   toggleAccount,
 } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
+import { CbeLogo, TelebirrLogo, BankLogo } from "@/components/ui/BankLogos";
 
 interface AccountsScreenProps {
   user: UserProfile;
@@ -215,9 +216,14 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
                       fontWeight: 600,
                       cursor: "pointer",
                       fontSize: "13px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
                     }}
                   >
-                    {b.icon} {b.value}
+                    {b.value === "CBE" ? <CbeLogo size={18} /> : <TelebirrLogo size={18} />}
+                    <span>{b.value}</span>
                   </button>
                 ))}
               </div>
@@ -280,7 +286,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
             {/* CBE GROUP */}
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-                <span style={{ fontSize: "18px" }}>🏦</span>
+                <CbeLogo size={22} />
                 <h3 style={{ fontSize: "16px", fontWeight: 700 }}>Commercial Bank of Ethiopia (CBE)</h3>
                 <span className="badge" style={{ marginLeft: "auto", fontSize: "11px" }}>
                   {groupedAccounts.CBE?.length || 0}
@@ -312,7 +318,7 @@ export default function AccountsScreen({ user, showToast }: AccountsScreenProps)
             {/* TELEBIRR GROUP */}
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-                <span style={{ fontSize: "18px" }}>📱</span>
+                <TelebirrLogo size={22} />
                 <h3 style={{ fontSize: "16px", fontWeight: 700 }}>Telebirr Accounts</h3>
                 <span className="badge" style={{ marginLeft: "auto", fontSize: "11px" }}>
                   {groupedAccounts.TELEBIRR?.length || 0}
@@ -441,13 +447,16 @@ function AccountItemCard({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <span style={{ fontSize: "16px", fontWeight: 700, display: "block" }}>
-            {account.accountHolderName}
-          </span>
-          <code style={{ fontSize: "14px", color: "var(--tg-theme-link-color, #0a84ff)", marginTop: "2px", display: "block" }}>
-            {account.accountNumber}
-          </code>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <BankLogo bank={account.bankName} size={36} />
+          <div>
+            <span style={{ fontSize: "16px", fontWeight: 700, display: "block" }}>
+              {account.accountHolderName}
+            </span>
+            <code style={{ fontSize: "14px", color: "var(--tg-theme-link-color, #0a84ff)", marginTop: "2px", display: "block" }}>
+              {account.accountNumber}
+            </code>
+          </div>
         </div>
         <span
           className="badge"

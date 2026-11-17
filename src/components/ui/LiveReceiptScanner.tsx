@@ -13,6 +13,8 @@ interface LiveReceiptScannerProps {
   onClose: () => void;
   onVerified?: (result: VerificationResult) => void;
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
+  expectedAmount?: number;
+  provider?: string;
 }
 
 type ScannerStep = "camera" | "preview" | "verifying";
@@ -41,6 +43,8 @@ export default function LiveReceiptScanner({
   onClose,
   onVerified,
   showToast,
+  expectedAmount,
+  provider,
 }: LiveReceiptScannerProps) {
   const [step, setStep] = useState<ScannerStep>("camera");
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
@@ -900,7 +904,7 @@ export default function LiveReceiptScanner({
     }, 1800);
 
     try {
-      const res = await verifyImageWithProgress(fileToUpload, undefined, undefined, (stage) => {
+      const res = await verifyImageWithProgress(fileToUpload, expectedAmount, provider, (stage) => {
         if (stage === "checking_bank") {
           reachedBank = true;
           setVerifyStage("checking_bank");

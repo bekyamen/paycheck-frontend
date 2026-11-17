@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { BankAccount, UserProfile } from "@/lib/api";
 import { getAccounts, addAccount } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
+import { CbeLogo, TelebirrLogo, BankLogo } from "@/components/ui/BankLogos";
 
 interface SettingsScreenProps {
   user: UserProfile;
@@ -19,6 +20,9 @@ const bankMeta = (value: string) =>
   BANKS.find((b) => b.value === value) ?? { value, label: value, icon: "🏦", placeholder: "" };
 
 function GroupHeader({ icon, label, count }: { icon: string; label: string; count: number }) {
+  const isCbe = label.includes("CBE") || icon === "🏦";
+  const isTelebirr = label.includes("Telebirr") || icon === "📱";
+
   return (
     <div
       style={{
@@ -29,7 +33,7 @@ function GroupHeader({ icon, label, count }: { icon: string; label: string; coun
         padding: "0 4px",
       }}
     >
-      <span style={{ fontSize: "20px" }}>{icon}</span>
+      {isCbe ? <CbeLogo size={20} /> : isTelebirr ? <TelebirrLogo size={20} /> : <span style={{ fontSize: "20px" }}>{icon}</span>}
       <span
         style={{
           fontSize: "12px",
@@ -61,24 +65,7 @@ function ReceivingAccountItem({ account }: { account: BankAccount }) {
       className="account-card"
       style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "14px" }}
     >
-      <div
-        style={{
-          width: "44px",
-          height: "44px",
-          borderRadius: "12px",
-          background:
-            account.bankName === "TELEBIRR"
-              ? "linear-gradient(135deg, #00b09b, #96c93d)"
-              : "linear-gradient(135deg, #0a84ff 0%, #5e5ce6 100%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: "20px",
-          flexShrink: 0,
-        }}
-      >
-        {meta.icon}
-      </div>
+      <BankLogo bank={account.bankName} size={44} />
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <p
@@ -355,7 +342,7 @@ export default function SettingsScreen({ user, showToast }: SettingsScreenProps)
                         transition: "all 150ms ease",
                       }}
                     >
-                      <span style={{ fontSize: "22px" }}>{b.icon}</span>
+                      {b.value === "CBE" ? <CbeLogo size={24} /> : <TelebirrLogo size={24} />}
                       <span
                         style={{
                           fontSize: "12px",

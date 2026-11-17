@@ -22,7 +22,8 @@ export default function MiniAppPage() {
   const isAdmin = user
     ? (user.isAdmin ?? (user.role === "OWNER" || user.role === "MANAGER" || user.role === "ADMIN"))
     : false;
-  const rootTab: NavTab = isAdmin ? "home" : "verify";
+  // Make Verify Payment page always the first open page so users can verify immediately
+  const rootTab: NavTab = "verify";
 
   // Derive active tab cleanly without synchronous setState in useEffect
   const [selectedTab, setSelectedTab] = useState<NavTab | null>(null);
@@ -117,11 +118,12 @@ export default function MiniAppPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [screen, activeTab]);
 
-  function handleAuthSuccess(token: string, profile: UserProfile, isCashier?: boolean) {
+  function handleAuthSuccess(token: string, profile: UserProfile, _isCashier?: boolean) {
     saveToken(token);
     setUser(profile);
     navHistoryRef.current = [];
-    setSelectedTab(isCashier || profile.role === "CASHIER" ? "verify" : "home");
+    // Always start on verify screen for fast payment verification
+    setSelectedTab("verify");
     setScreen("app");
 
     // Automatically link Telegram account if inside Telegram

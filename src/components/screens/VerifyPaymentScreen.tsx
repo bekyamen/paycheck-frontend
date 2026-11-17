@@ -18,6 +18,12 @@ import { compressReceiptImage } from "@/lib/imageCompressor";
 import { detectQrInReceiptFile } from "@/lib/qrClientDetector";
 import { haptic } from "@/lib/telegram";
 import LiveReceiptScanner from "@/components/ui/LiveReceiptScanner";
+import { TelebirrLogo, CbeLogo, BankLogo } from "@/components/ui/BankLogos";
+import {
+  formatGregorianDateTime,
+  formatEthiopianDateTime,
+  formatRelativeFromVerification,
+} from "@/lib/dateUtils";
 
 interface VerifyPaymentScreenProps {
   user: UserProfile;
@@ -72,32 +78,8 @@ function formatRecentTimestamp(isoStr: string | null): { dateText: string; agoTe
   return { dateText, agoText };
 }
 
-function ProviderBadgeIcon({ provider }: { provider: string }) {
-  const upper = provider.toUpperCase();
-  if (upper === "TELEBIRR") {
-    return (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <path
-          d="M12 3v8M8 7h8M12 11c3.5 0 6 2.5 6 5.5S15.5 21 12 21s-6-2.5-6-5.5"
-          stroke="#0ea5e9"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-  if (upper === "CBE") {
-    return (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <polygon points="12,3 14.7,9 21,9.5 16,13.8 17.5,20 12,16.8 6.5,20 8,13.8 3,9.5 9.3,9" fill="#f59e0b" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2.2">
-      <path d="M3 10h18M5 10v8M10 10v8M14 10v8M19 10v8M2 20h20M12 3l10 5H2l10-5z" />
-    </svg>
-  );
+function ProviderBadgeIcon({ provider, size = 26 }: { provider: string; size?: number }) {
+  return <BankLogo bank={provider} size={size} />;
 }
 
 export default function VerifyPaymentScreen({
@@ -354,6 +336,11 @@ export default function VerifyPaymentScreen({
       const scan = await detectQrInReceiptFile(file, previewUrl || undefined);
       if (qrScanTokenRef.current === token) {
         setStagedCaption(scan.caption);
+        if (scan.kind === "TELEBIRR") {
+          setProvider("TELEBIRR");
+        } else if (scan.kind === "CBE") {
+          setProvider("CBE");
+        }
       }
     } catch {
       if (qrScanTokenRef.current === token) {
@@ -381,7 +368,8 @@ export default function VerifyPaymentScreen({
               fileName: stagedFile.name,
             });
 
-      const res = await verifyImageWithProgress(payload);
+      const parsedExpected = amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined;
+      const res = await verifyImageWithProgress(payload, parsedExpected, provider);
       setResult(res);
       handleResultHaptic(res.status);
       applyVerificationInstant(res, range);
@@ -421,8 +409,13 @@ export default function VerifyPaymentScreen({
       applyVerificationInstant(res, range);
     } catch (err: unknown) {
       haptic("error");
-      const msg = (err as Error).message || "Verification failed";
-      setResult({ status: "INVALID_RECEIPT", message: msg });
+      const errObj = err as Error & { verificationResult?: VerificationResult };
+      const msg = errObj.message || "Verification failed";
+      const fallbackRes = errObj.verificationResult || { status: "INVALID_RECEIPT", message: msg };
+      setResult(fallbackRes);
+      if (fallbackRes.status === "FLAGGED_DUPLICATE" || fallbackRes.status === "FAILED_UPSTREAM") {
+        applyVerificationInstant(fallbackRes, range);
+      }
       showToast(msg, "error");
     } finally {
       setLoading(false);
@@ -451,8 +444,13 @@ export default function VerifyPaymentScreen({
       applyVerificationInstant(res, range);
     } catch (err: unknown) {
       haptic("error");
-      const msg = (err as Error).message || "SMS/Link verification failed";
-      setResult({ status: "INVALID_RECEIPT", message: msg });
+      const errObj = err as Error & { verificationResult?: VerificationResult };
+      const msg = errObj.message || "SMS/Link verification failed";
+      const fallbackRes = errObj.verificationResult || { status: "INVALID_RECEIPT", message: msg };
+      setResult(fallbackRes);
+      if (fallbackRes.status === "FLAGGED_DUPLICATE" || fallbackRes.status === "FAILED_UPSTREAM") {
+        applyVerificationInstant(fallbackRes, range);
+      }
       showToast(msg, "error");
     } finally {
       setLoading(false);
@@ -463,12 +461,17 @@ export default function VerifyPaymentScreen({
     result && /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
   );
 
+  const isPendingUpstream = Boolean(
+    result && (result.status === "FAILED_UPSTREAM" || result.status === "PENDING")
+  );
+
   const isUnreadable = Boolean(
     result &&
       !isWrongReceiver &&
+      !isPendingUpstream &&
       (result.status === "INVALID_RECEIPT" ||
         result.status === "INVALID" ||
-        result.status === "FAILED_UPSTREAM" ||
+        result.status === "REJECTED" ||
         result.status === "UNKNOWN" ||
         result.status === "FAILED")
   );
@@ -500,6 +503,8 @@ export default function VerifyPaymentScreen({
       {isScannerOpen && (
         <LiveReceiptScanner
           onClose={closeScanner}
+          expectedAmount={amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined}
+          provider={provider}
           onVerified={(verifiedRes) => {
             setResult(verifiedRes);
             closeScanner();
@@ -847,8 +852,24 @@ export default function VerifyPaymentScreen({
                         haptic("selection");
                         setProvider(p);
                       }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                      }}
                     >
-                      {p === "CBE" ? "🏦 CBE Bank" : "📱 Telebirr"}
+                      {p === "CBE" ? (
+                        <>
+                          <CbeLogo size={18} />
+                          <span>CBE Bank</span>
+                        </>
+                      ) : (
+                        <>
+                          <TelebirrLogo size={18} />
+                          <span>Telebirr</span>
+                        </>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -943,7 +964,7 @@ export default function VerifyPaymentScreen({
                 ? "2px solid #30d158"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "2px solid #ff453a"
-                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
                 ? "2px solid #ff9f0a"
                 : "2px solid #ff453a",
             background:
@@ -951,7 +972,7 @@ export default function VerifyPaymentScreen({
                 ? "rgba(48, 209, 88, 0.12)"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "rgba(255, 69, 58, 0.12)"
-                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
                 ? "rgba(255, 159, 10, 0.14)"
                 : "rgba(255, 69, 58, 0.12)",
           }}
@@ -966,25 +987,27 @@ export default function VerifyPaymentScreen({
                   background:
                     result.status === "VERIFIED"
                       ? "#30d158"
-                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver
+                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
                       ? "#ff9f0a"
                       : "#ff453a",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: "20px",
-                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "#000" : "#fff",
+                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream ? "#000" : "#fff",
                   flexShrink: 0,
                 }}
               >
-                {result.status === "VERIFIED" ? "✓" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
+                {result.status === "VERIFIED" ? "✓" : isPendingUpstream ? "⏳" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
               </div>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontSize: "17px", fontWeight: 800 }}>
                   {result.status === "VERIFIED"
-                    ? "Payment Verified!"
+                    ? "Verified / ተረጋግጧል"
                     : result.status === "FLAGGED_DUPLICATE"
                     ? "Duplicate Payment!"
+                    : isPendingUpstream
+                    ? "Pending Verification — Retry"
                     : result.status === "AMOUNT_MISMATCH"
                     ? "Amount Mismatch"
                     : isWrongReceiver
@@ -995,9 +1018,11 @@ export default function VerifyPaymentScreen({
                   {result.status === "VERIFIED"
                     ? "Legitimate payment received in your designated account."
                     : result.status === "FLAGGED_DUPLICATE"
-                    ? "Warning: This receipt was already verified! Do NOT release goods."
+                    ? result.message || "Warning: This receipt was already verified! Do NOT release goods."
+                    : isPendingUpstream
+                    ? result.message || "Could not reach Ethio Telecom right now. Saved as pending — please retry shortly."
                     : result.status === "AMOUNT_MISMATCH"
-                    ? "Amount on receipt does not match expected payment."
+                    ? result.message || "Amount on receipt does not match expected payment."
                     : result.message || "Could not confirm payment."}
                 </p>
               </div>
@@ -1022,6 +1047,43 @@ export default function VerifyPaymentScreen({
             </button>
           </div>
 
+          {isPendingUpstream && String(result.provider || "").toUpperCase() === "TELEBIRR" && result.txnReference && (
+            <div style={{ margin: "10px 0 12px" }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={loading}
+                style={{ background: "#ff9f0a", color: "#111827", fontWeight: 700 }}
+                onClick={async () => {
+                  const ref = result.txnReference!;
+                  const exp = result.expectedAmount ? Number(result.expectedAmount) : undefined;
+                  haptic("selection");
+                  setLoading(true);
+                  try {
+                    const retried = await verifyUrl({
+                      receiptUrl: `https://transactioninfo.ethiotelecom.et/receipt/${encodeURIComponent(ref)}`,
+                      ...(exp && exp > 0 ? { expectedAmount: exp } : {}),
+                    });
+                    setResult(retried);
+                    handleResultHaptic(retried.status);
+                    applyVerificationInstant(retried, range);
+                  } catch (err: unknown) {
+                    haptic("error");
+                    const errObj = err as Error & { verificationResult?: VerificationResult };
+                    const msg = errObj.message || "Retry failed";
+                    const nextRes = errObj.verificationResult || { ...result, message: msg };
+                    setResult(nextRes);
+                    showToast(msg, "error");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                {loading ? "Retrying Telebirr..." : "🔄 Retry Verification Now"}
+              </button>
+            </div>
+          )}
+
           {isUnreadable && (
             <div
               style={{
@@ -1038,40 +1100,148 @@ export default function VerifyPaymentScreen({
             </div>
           )}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "7px", fontSize: "13.5px" }}>
-            {result.amount !== undefined && result.amount !== null && (
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="text-muted">Verified Amount:</span>
-                <strong>
-                  {!isNaN(Number(result.amount)) ? Number(result.amount).toFixed(2) : String(result.amount)} ETB
-                </strong>
+          {result.status === "VERIFIED" ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "11px",
+                padding: "14px",
+                background: "rgba(0, 0, 0, 0.28)",
+                borderRadius: "14px",
+                fontSize: "14px",
+                border: "1px solid rgba(48, 209, 88, 0.25)",
+              }}
+            >
+              {/* Provider Row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px" }}>🏦</span>
+                  <span style={{ fontWeight: 800, letterSpacing: "0.5px", fontSize: "15px" }}>
+                    {String(result.provider || "TELEBIRR").toUpperCase()}
+                  </span>
+                </div>
+                <BankLogo bank={result.provider || "TELEBIRR"} size={26} />
               </div>
-            )}
-            {result.txnReference && (
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="text-muted">Ref:</span>
-                <code>{result.txnReference}</code>
+
+              {/* Amount Row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px" }}>💰</span>
+                  <span style={{ fontSize: "18px", fontWeight: 800, color: "#30d158" }}>
+                    ETB{" "}
+                    {(() => {
+                      const n = Number(result.settledAmount ?? result.amount ?? 0);
+                      if (isNaN(n)) return "0";
+                      return n % 1 === 0
+                        ? n.toLocaleString("en-US")
+                        : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    })()}
+                  </span>
+                </div>
+                {result.expectedAmount && Number(result.expectedAmount) === Number(result.settledAmount ?? result.amount) && (
+                  <span className="badge" style={{ background: "rgba(48, 209, 88, 0.2)", color: "#30d158", fontSize: "11px" }}>
+                    Exact Match
+                  </span>
+                )}
               </div>
-            )}
-            {result.payerName && (
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="text-muted">Payer:</span>
-                <span>{result.payerName}</span>
+
+              {/* Reference Row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px" }}>🔖</span>
+                  <code style={{ fontSize: "14px", fontWeight: 800, color: "#60a5fa", letterSpacing: "0.5px" }}>
+                    {result.txnReference || "—"}
+                  </code>
+                </div>
               </div>
-            )}
-            {result.receivingAccount && (
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="text-muted">Paid To:</span>
-                <span>{result.receivingAccount}</span>
+
+              {/* Party / Recipient Row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px" }}>👥</span>
+                  <strong style={{ fontSize: "14px" }}>
+                    {result.receiverName ||
+                      (result.raw as any)?.to_name ||
+                      (result.raw as any)?.pdf_link_data?.to_name ||
+                      (result.raw as any)?.link_receipt_data?.credited_party_name ||
+                      result.receivingAccount ||
+                      result.payerName ||
+                      "SADA"}
+                  </strong>
+                </div>
               </div>
-            )}
-            {result.provider && (
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span className="text-muted">Provider:</span>
-                <span>{result.provider}</span>
-              </div>
-            )}
-          </div>
+
+              {/* Date & Ethiopian Calendar & Relative Time Rows */}
+              {(() => {
+                const rawTxDate = result.transactionDate || result.verifiedAt;
+                const txDate = rawTxDate ? new Date(rawTxDate) : new Date();
+                const validTx = isNaN(txDate.getTime()) ? new Date() : txDate;
+
+                const rawVerifyDate = result.verifiedAt;
+                const verifyDate = rawVerifyDate ? new Date(rawVerifyDate) : new Date();
+                const validVerify = isNaN(verifyDate.getTime()) ? new Date() : verifyDate;
+
+                const gregStr = formatGregorianDateTime(validTx);
+                const ethStr = formatEthiopianDateTime(validTx);
+                const relStr = formatRelativeFromVerification(validTx, validVerify);
+
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "3px", marginTop: "4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "17px" }}>📅</span>
+                      <span style={{ fontWeight: 600 }}>{gregStr}</span>
+                    </div>
+                    {ethStr && (
+                      <div style={{ paddingLeft: "26px", color: "var(--tg-theme-hint-color, #9ca3af)", fontSize: "13px" }}>
+                        ({ethStr})
+                      </div>
+                    )}
+                    {relStr && (
+                      <div style={{ paddingLeft: "26px", color: "#30d158", fontSize: "12px", fontWeight: 600 }}>
+                        {relStr}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "7px", fontSize: "13.5px" }}>
+              {result.amount !== undefined && result.amount !== null && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Amount:</span>
+                  <strong>
+                    {!isNaN(Number(result.amount)) ? Number(result.amount).toFixed(2) : String(result.amount)} ETB
+                  </strong>
+                </div>
+              )}
+              {result.txnReference && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Ref:</span>
+                  <code>{result.txnReference}</code>
+                </div>
+              )}
+              {result.payerName && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Payer:</span>
+                  <span>{result.payerName}</span>
+                </div>
+              )}
+              {result.receivingAccount && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Paid To:</span>
+                  <span>{result.receivingAccount}</span>
+                </div>
+              )}
+              {result.provider && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span className="text-muted">Provider:</span>
+                  <span>{result.provider}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1095,12 +1265,14 @@ export default function VerifyPaymentScreen({
             const isVerified = tx.status === "VERIFIED";
             const isDup = tx.status === "FLAGGED_DUPLICATE";
             const isMismatch = tx.status === "AMOUNT_MISMATCH";
+            const isPending = tx.status === "PENDING";
+            const isRejected = tx.status === "REJECTED";
 
             const badgeClass = isVerified
               ? "verified"
               : isDup
               ? "duplicate"
-              : isMismatch
+              : isMismatch || isPending
               ? "mismatch"
               : "failed";
             const badgeText = isVerified
@@ -1109,8 +1281,12 @@ export default function VerifyPaymentScreen({
               ? "Duplicate"
               : isMismatch
               ? "Mismatch"
+              : isPending
+              ? "Pending"
+              : isRejected
+              ? "Rejected"
               : "Failed";
-            const dotColor = isVerified ? "#22c55e" : isMismatch ? "#f59e0b" : "#ef4444";
+            const dotColor = isVerified ? "#22c55e" : isMismatch || isPending ? "#f59e0b" : "#ef4444";
 
             const sub = tx.payerName || (tx.receivingAccount ? `To ${tx.receivingAccount}` : "Receipt check");
             const { dateText, agoText } = formatRecentTimestamp(tx.verifiedAt || tx.createdAt);
