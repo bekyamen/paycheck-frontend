@@ -249,6 +249,7 @@ export async function deleteCashier(id: string): Promise<{ message: string; ok: 
 export interface VerificationResult {
   id?: string;
   status: "VERIFIED" | "FLAGGED_DUPLICATE" | "AMOUNT_MISMATCH" | "INVALID" | "INVALID_RECEIPT" | "FAILED_UPSTREAM" | string;
+  code?: string;
   provider?: string;
   txnReference?: string;
   amount?: number | string;
@@ -302,7 +303,6 @@ export async function verifyTelebirrReceiptPayProof(
 ): Promise<VerificationResult> {
   const token = getToken();
   const formData = new FormData();
-  formData.append("images[]", file);
   formData.append("receipt", file);
   if (expectedAmount) {
     formData.append("expectedAmount", expectedAmount.toString());
@@ -403,7 +403,6 @@ export async function verifyImageWithProgress(
   const token = getToken();
   const formData = new FormData();
   formData.append("receipt", file);
-  formData.append("images[]", file);
   if (expectedAmount) {
     formData.append("expectedAmount", expectedAmount.toString());
   }

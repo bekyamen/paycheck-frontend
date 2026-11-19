@@ -117,6 +117,7 @@ export default function VerifyPaymentScreen({
   const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [stagedPreviewUrl, setStagedPreviewUrl] = useState<string | null>(null);
   const [stagedCaption, setStagedCaption] = useState<string>("");
+  const [stagedProvider, setStagedProvider] = useState<"CBE" | "TELEBIRR" | undefined>(undefined);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const stagedPreviewUrlRef = useRef<string | null>(null);
   const qrScanTokenRef = useRef<number>(0);
@@ -307,6 +308,7 @@ export default function VerifyPaymentScreen({
     setStagedFile(null);
     setStagedPreviewUrl(null);
     setStagedCaption("");
+    setStagedProvider(undefined);
     if (uploadInputRef.current) uploadInputRef.current.value = "";
   }
 
@@ -316,6 +318,7 @@ export default function VerifyPaymentScreen({
 
     haptic("selection");
     setResult(null);
+    setStagedProvider(undefined);
 
     if (stagedPreviewUrlRef.current) {
       URL.revokeObjectURL(stagedPreviewUrlRef.current);
@@ -337,14 +340,17 @@ export default function VerifyPaymentScreen({
       if (qrScanTokenRef.current === token) {
         setStagedCaption(scan.caption);
         if (scan.kind === "TELEBIRR") {
-          setProvider("TELEBIRR");
+          setStagedProvider("TELEBIRR");
         } else if (scan.kind === "CBE") {
-          setProvider("CBE");
+          setStagedProvider("CBE");
+        } else {
+          setStagedProvider(undefined);
         }
       }
     } catch {
       if (qrScanTokenRef.current === token) {
         setStagedCaption("Receipt selected — tap Verify to scan and check payment.");
+        setStagedProvider(undefined);
       }
     }
   }
@@ -362,14 +368,15 @@ export default function VerifyPaymentScreen({
         stagedFile.type === "application/pdf"
           ? stagedFile
           : await compressReceiptImage(stagedFile, {
-              maxDimension: 1400,
-              maxHeight: 2600,
-              quality: 0.85,
+              maxDimension: 1080,
+              maxHeight: 1920,
+              quality: 0.80,
               fileName: stagedFile.name,
             });
 
       const parsedExpected = amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined;
-      const res = await verifyImageWithProgress(payload, parsedExpected, provider);
+      // Only pass provider if client QR explicitly detected one; otherwise let backend auto-detect CBE vs Telebirr!
+      const res = await verifyImageWithProgress(payload, parsedExpected, stagedProvider);
       setResult(res);
       handleResultHaptic(res.status);
       applyVerificationInstant(res, range);
@@ -457,16 +464,25 @@ export default function VerifyPaymentScreen({
     }
   }
 
+  const isSubscriptionExpired = Boolean(
+    result &&
+      (result.code === "SUBSCRIPTION_EXPIRED" ||
+        /subscription.*(expired|ended|finished)|credits?.*(expired|finished|exhausted)|payment required|status code 402/i.test(
+          result.message || ""
+        ))
+  );
+
   const isWrongReceiver = Boolean(
-    result && /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
+    result && !isSubscriptionExpired && /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
   );
 
   const isPendingUpstream = Boolean(
-    result && (result.status === "FAILED_UPSTREAM" || result.status === "PENDING")
+    result && !isSubscriptionExpired && (result.status === "FAILED_UPSTREAM" || result.status === "PENDING")
   );
 
   const isUnreadable = Boolean(
     result &&
+      !isSubscriptionExpired &&
       !isWrongReceiver &&
       !isPendingUpstream &&
       (result.status === "INVALID_RECEIPT" ||
@@ -504,7 +520,6 @@ export default function VerifyPaymentScreen({
         <LiveReceiptScanner
           onClose={closeScanner}
           expectedAmount={amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined}
-          provider={provider}
           onVerified={(verifiedRes) => {
             setResult(verifiedRes);
             closeScanner();
@@ -964,7 +979,7 @@ export default function VerifyPaymentScreen({
                 ? "2px solid #30d158"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "2px solid #ff453a"
-                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired
                 ? "2px solid #ff9f0a"
                 : "2px solid #ff453a",
             background:
@@ -972,7 +987,7 @@ export default function VerifyPaymentScreen({
                 ? "rgba(48, 209, 88, 0.12)"
                 : result.status === "FLAGGED_DUPLICATE"
                 ? "rgba(255, 69, 58, 0.12)"
-                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
+                : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired
                 ? "rgba(255, 159, 10, 0.14)"
                 : "rgba(255, 69, 58, 0.12)",
           }}
@@ -987,18 +1002,18 @@ export default function VerifyPaymentScreen({
                   background:
                     result.status === "VERIFIED"
                       ? "#30d158"
-                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream
+                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired
                       ? "#ff9f0a"
                       : "#ff453a",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: "20px",
-                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream ? "#000" : "#fff",
+                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired ? "#000" : "#fff",
                   flexShrink: 0,
                 }}
               >
-                {result.status === "VERIFIED" ? "✓" : isPendingUpstream ? "⏳" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
+                {result.status === "VERIFIED" ? "✓" : isSubscriptionExpired ? "💳" : isPendingUpstream ? "⏳" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
               </div>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontSize: "17px", fontWeight: 800 }}>
@@ -1006,6 +1021,8 @@ export default function VerifyPaymentScreen({
                     ? "Verified / ተረጋግጧል"
                     : result.status === "FLAGGED_DUPLICATE"
                     ? "Duplicate Payment!"
+                    : isSubscriptionExpired
+                    ? "Telebirr Service Paused"
                     : isPendingUpstream
                     ? "Pending Verification — Retry"
                     : result.status === "AMOUNT_MISMATCH"
@@ -1019,6 +1036,8 @@ export default function VerifyPaymentScreen({
                     ? "Legitimate payment received in your designated account."
                     : result.status === "FLAGGED_DUPLICATE"
                     ? result.message || "Warning: This receipt was already verified! Do NOT release goods."
+                    : isSubscriptionExpired
+                    ? result.message || "Telebirr verification subscription/credits have finished. Please renew your Telebirr verification plan or contact support."
                     : isPendingUpstream
                     ? result.message || "Could not reach Ethio Telecom right now. Saved as pending — please retry shortly."
                     : result.status === "AMOUNT_MISMATCH"
