@@ -252,6 +252,8 @@ export interface VerificationResult {
   code?: string;
   provider?: string;
   txnReference?: string;
+  reference?: string;
+  to_name?: string;
   amount?: number | string;
   settledAmount?: number | string;
   expectedAmount?: number | string;

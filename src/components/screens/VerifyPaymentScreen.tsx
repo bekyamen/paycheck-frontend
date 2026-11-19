@@ -203,7 +203,7 @@ export default function VerifyPaymentScreen({
   const applyVerificationInstant = useCallback(
     (res: VerificationResult, targetRange: VerificationHistoryRange) => {
       const prov = String(res.provider || "").toUpperCase();
-      const ref = res.txnReference ? String(res.txnReference) : "";
+      const ref = res.txnReference || res.reference ? String(res.txnReference || res.reference) : "";
       if (!ref && res.status !== "VERIFIED") return;
 
       const existing = recentItemsRef.current.find(
@@ -1121,7 +1121,7 @@ export default function VerifyPaymentScreen({
             </button>
           </div>
 
-          {isPendingUpstream && String(result.provider || "").toUpperCase() === "TELEBIRR" && result.txnReference && (
+          {isPendingUpstream && String(result.provider || "").toUpperCase() === "TELEBIRR" && (result.txnReference || result.reference) && (
             <div style={{ margin: "10px 0 12px" }}>
               <button
                 type="button"
@@ -1129,7 +1129,7 @@ export default function VerifyPaymentScreen({
                 disabled={loading}
                 style={{ background: "#ff9f0a", color: "#111827", fontWeight: 700 }}
                 onClick={async () => {
-                  const ref = result.txnReference!;
+                  const ref = (result.txnReference || result.reference)!;
                   const exp = result.expectedAmount ? Number(result.expectedAmount) : undefined;
                   haptic("selection");
                   setLoading(true);
@@ -1241,7 +1241,7 @@ export default function VerifyPaymentScreen({
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "17px" }}>🔖</span>
                   <code style={{ fontSize: "14px", fontWeight: 800, color: "#60a5fa", letterSpacing: "0.5px" }}>
-                    {result.txnReference || "—"}
+                    {result.txnReference || result.reference || "—"}
                   </code>
                 </div>
               </div>
@@ -1251,8 +1251,9 @@ export default function VerifyPaymentScreen({
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "17px" }}>👥</span>
                   <strong style={{ fontSize: "14px" }}>
-                    {result.receiverName ||
+                    {result.to_name ||
                       (result.raw as any)?.to_name ||
+                      result.receiverName ||
                       (result.raw as any)?.pdf_link_data?.to_name ||
                       (result.raw as any)?.link_receipt_data?.credited_party_name ||
                       result.receivingAccount ||
@@ -1306,10 +1307,10 @@ export default function VerifyPaymentScreen({
                   </strong>
                 </div>
               )}
-              {result.txnReference && (
+              {(result.txnReference || result.reference) && (
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span className="text-muted">Ref:</span>
-                  <code>{result.txnReference}</code>
+                  <code>{result.txnReference || result.reference}</code>
                 </div>
               )}
               {result.payerName && (
@@ -1396,7 +1397,7 @@ export default function VerifyPaymentScreen({
 
                 <div className="cf-vp-tx-right">
                   <div className="cf-vp-tx-amt">ETB {formatEtbAmount(tx.amount)}</div>
-                  <div className="cf-vp-tx-ref">{tx.txnReference || "—"}</div>
+                  <div className="cf-vp-tx-ref">{tx.txnReference || (tx as any).reference || "—"}</div>
                   <div className="cf-vp-tx-date">{dateText}</div>
                   {agoText && <div className="cf-vp-tx-ago">{agoText}</div>}
                 </div>
