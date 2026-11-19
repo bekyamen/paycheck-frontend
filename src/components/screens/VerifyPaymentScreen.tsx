@@ -375,8 +375,8 @@ export default function VerifyPaymentScreen({
             });
 
       const parsedExpected = amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined;
-      // Only pass provider if client QR explicitly detected one; otherwise let backend auto-detect CBE vs Telebirr!
-      const res = await verifyImageWithProgress(payload, parsedExpected, stagedProvider);
+      const targetProvider = stagedProvider || provider;
+      const res = await verifyImageWithProgress(payload, parsedExpected, targetProvider);
       setResult(res);
       handleResultHaptic(res.status);
       applyVerificationInstant(res, range);
@@ -472,17 +472,30 @@ export default function VerifyPaymentScreen({
         ))
   );
 
+  const isReceiptTooOld = Boolean(
+    result &&
+      (result.code === "RECEIPT_TOO_OLD" ||
+        /older than \d+ hours|receipt.*expired|የደረሰኝ ጊዜ አልፏል/i.test(result.message || ""))
+  );
+
   const isWrongReceiver = Boolean(
-    result && !isSubscriptionExpired && /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
+    result &&
+      !isSubscriptionExpired &&
+      !isReceiptTooOld &&
+      /wrong receiver|receiver account mismatch|receiver mismatch|not to your registered/i.test(result.message || "")
   );
 
   const isPendingUpstream = Boolean(
-    result && !isSubscriptionExpired && (result.status === "FAILED_UPSTREAM" || result.status === "PENDING")
+    result &&
+      !isSubscriptionExpired &&
+      !isReceiptTooOld &&
+      (result.status === "FAILED_UPSTREAM" || result.status === "PENDING")
   );
 
   const isUnreadable = Boolean(
     result &&
       !isSubscriptionExpired &&
+      !isReceiptTooOld &&
       !isWrongReceiver &&
       !isPendingUpstream &&
       (result.status === "INVALID_RECEIPT" ||
@@ -520,6 +533,7 @@ export default function VerifyPaymentScreen({
         <LiveReceiptScanner
           onClose={closeScanner}
           expectedAmount={amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined}
+          provider={provider}
           onVerified={(verifiedRes) => {
             setResult(verifiedRes);
             closeScanner();
@@ -721,111 +735,148 @@ export default function VerifyPaymentScreen({
       </div>
 
       {/* ── PHOTO / SCAN ACTIONS ── */}
-      {tab === "photo" &&
-        (stagedFile ? (
-          <div className="cf-vp-staged-wrap">
-            <div className="cf-vp-cta-row">
-              <div className="cf-vp-thumb-box">
-                <div className="cf-vp-thumb-card">
-                  {stagedPreviewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={stagedPreviewUrl} alt="Selected receipt preview" />
-                  ) : (
-                    <span className="cf-vp-thumb-pdf">PDF</span>
-                  )}
+      {tab === "photo" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {/* Bank / Provider Selector for Photo Verification */}
+          <div className="cf-vp-prov-row" style={{ marginBottom: "2px" }}>
+            {(["CBE", "TELEBIRR"] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`cf-vp-prov-btn ${(stagedProvider || provider) === p ? "active" : ""}`}
+                onClick={() => {
+                  haptic("selection");
+                  setProvider(p);
+                  setStagedProvider(p);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                }}
+              >
+                {p === "CBE" ? (
+                  <>
+                    <CbeLogo size={18} />
+                    <span>CBE Bank</span>
+                  </>
+                ) : (
+                  <>
+                    <TelebirrLogo size={18} />
+                    <span>Telebirr</span>
+                  </>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {stagedFile ? (
+            <div className="cf-vp-staged-wrap">
+              <div className="cf-vp-cta-row">
+                <div className="cf-vp-thumb-box">
+                  <div className="cf-vp-thumb-card">
+                    {stagedPreviewUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={stagedPreviewUrl} alt="Selected receipt preview" />
+                    ) : (
+                      <span className="cf-vp-thumb-pdf">PDF</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="cf-vp-thumb-clear"
+                    disabled={uploadingImage}
+                    onClick={() => {
+                      haptic("selection");
+                      clearStagedGalleryFile();
+                    }}
+                    aria-label="Remove selected receipt"
+                    title="Remove receipt"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
                 </div>
+
                 <button
                   type="button"
-                  className="cf-vp-thumb-clear"
+                  className="cf-vp-verify-pill-btn"
                   disabled={uploadingImage}
-                  onClick={() => {
-                    haptic("selection");
-                    clearStagedGalleryFile();
-                  }}
-                  aria-label="Remove selected receipt"
-                  title="Remove receipt"
+                  onClick={() => void handleVerifyStagedGallery()}
                 >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
+                  {uploadingImage ? (
+                    <>
+                      <span className="cf-vp-spinner-dark" />
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <span>Verify</span>
+                  )}
                 </button>
               </div>
+              {stagedCaption && <div className="cf-vp-staged-note">{stagedCaption}</div>}
+            </div>
+          ) : (
+            <div className="cf-vp-cta-row">
+              <button
+                type="button"
+                className="cf-vp-take-btn"
+                onClick={() => {
+                  haptic("selection");
+                  openScanner();
+                }}
+              >
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#111827"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+                <span>Take a picture</span>
+              </button>
 
               <button
                 type="button"
-                className="cf-vp-verify-pill-btn"
+                className="cf-vp-upload-btn"
                 disabled={uploadingImage}
-                onClick={() => void handleVerifyStagedGallery()}
+                onClick={() => {
+                  haptic("selection");
+                  uploadInputRef.current?.click();
+                }}
+                aria-label="Upload receipt image or PDF"
+                title="Upload screenshot or photo"
               >
-                {uploadingImage ? (
-                  <>
-                    <span className="cf-vp-spinner-dark" />
-                    <span>Verifying...</span>
-                  </>
-                ) : (
-                  <span>Verify</span>
-                )}
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#e5a922"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ opacity: uploadingImage ? 0.45 : 1 }}
+                >
+                  <rect x="3" y="5" width="14" height="14" rx="2.5" />
+                  <circle cx="7.5" cy="9.5" r="1.2" fill="#e5a922" stroke="none" />
+                  <path d="M4 17l4-4 3 3 2.5-2.5L17 17" />
+                  <path d="M19 9V3m0 0l-2.5 2.5M19 3l2.5 2.5" />
+                </svg>
               </button>
             </div>
-            {stagedCaption && <div className="cf-vp-staged-note">{stagedCaption}</div>}
-          </div>
-        ) : (
-          <div className="cf-vp-cta-row">
-            <button
-              type="button"
-              className="cf-vp-take-btn"
-              onClick={() => {
-                haptic("selection");
-                openScanner();
-              }}
-            >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#111827"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx="12" cy="13" r="4" />
-              </svg>
-              <span>Take a picture</span>
-            </button>
-
-            <button
-              type="button"
-              className="cf-vp-upload-btn"
-              disabled={uploadingImage}
-              onClick={() => {
-                haptic("selection");
-                uploadInputRef.current?.click();
-              }}
-              aria-label="Upload receipt image or PDF"
-              title="Upload screenshot or photo"
-            >
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#e5a922"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ opacity: uploadingImage ? 0.45 : 1 }}
-              >
-                <rect x="3" y="5" width="14" height="14" rx="2.5" />
-                <circle cx="7.5" cy="9.5" r="1.2" fill="#e5a922" stroke="none" />
-                <path d="M4 17l4-4 3 3 2.5-2.5L17 17" />
-                <path d="M19 9V3m0 0l-2.5 2.5M19 3l2.5 2.5" />
-              </svg>
-            </button>
-          </div>
-        ))}
+          )}
+        </div>
+      )}
 
       {/* ── REFERENCE / SMS PANEL ── */}
       {tab === "ref" && (
@@ -1002,27 +1053,29 @@ export default function VerifyPaymentScreen({
                   background:
                     result.status === "VERIFIED"
                       ? "#30d158"
-                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired
+                      : result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired || isReceiptTooOld
                       ? "#ff9f0a"
                       : "#ff453a",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: "20px",
-                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired ? "#000" : "#fff",
+                  color: result.status === "AMOUNT_MISMATCH" || isWrongReceiver || isPendingUpstream || isSubscriptionExpired || isReceiptTooOld ? "#000" : "#fff",
                   flexShrink: 0,
                 }}
               >
-                {result.status === "VERIFIED" ? "✓" : isSubscriptionExpired ? "💳" : isPendingUpstream ? "⏳" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
+                {result.status === "VERIFIED" ? "✓" : isSubscriptionExpired ? "💳" : isReceiptTooOld ? "⏱️" : isPendingUpstream ? "⏳" : result.status === "AMOUNT_MISMATCH" || isWrongReceiver ? "!" : "✕"}
               </div>
               <div style={{ minWidth: 0 }}>
                 <h3 style={{ fontSize: "17px", fontWeight: 800 }}>
                   {result.status === "VERIFIED"
                     ? "Verified / ተረጋግጧል"
                     : result.status === "FLAGGED_DUPLICATE"
-                    ? "Duplicate Payment!"
+                    ? "Duplicate Payment! / የተደገመ ክፍያ"
                     : isSubscriptionExpired
                     ? "Telebirr Service Paused"
+                    : isReceiptTooOld
+                    ? "Receipt Expired / ጊዜው አልፏል"
                     : isPendingUpstream
                     ? "Pending Verification — Retry"
                     : result.status === "AMOUNT_MISMATCH"
@@ -1031,13 +1084,15 @@ export default function VerifyPaymentScreen({
                     ? "Wrong Receiver — Not Accepted"
                     : "Verification Failed"}
                 </h3>
-                <p className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                <p className="text-muted text-xs" style={{ marginTop: "2px", whiteSpace: "pre-line" }}>
                   {result.status === "VERIFIED"
                     ? "Legitimate payment received in your designated account."
                     : result.status === "FLAGGED_DUPLICATE"
                     ? result.message || "Warning: This receipt was already verified! Do NOT release goods."
                     : isSubscriptionExpired
                     ? result.message || "Telebirr verification subscription/credits have finished. Please renew your Telebirr verification plan or contact support."
+                    : isReceiptTooOld
+                    ? result.message || "This receipt is older than allowed limit (72 hours). Please request a recent receipt."
                     : isPendingUpstream
                     ? result.message || "Could not reach Ethio Telecom right now. Saved as pending — please retry shortly."
                     : result.status === "AMOUNT_MISMATCH"
@@ -1100,6 +1155,22 @@ export default function VerifyPaymentScreen({
               >
                 {loading ? "Retrying Telebirr..." : "🔄 Retry Verification Now"}
               </button>
+            </div>
+          )}
+
+          {isReceiptTooOld && (
+            <div
+              style={{
+                background: "rgba(255, 159, 10, 0.15)",
+                border: "1px solid rgba(255, 159, 10, 0.35)",
+                borderRadius: "10px",
+                padding: "10px 12px",
+                margin: "8px 0 12px",
+                fontSize: "12px",
+                color: "#ff9f0a",
+              }}
+            >
+              ⏱️ <strong>Receipt Expired:</strong> Payments must be verified within 72 hours of completion to prevent reuse of old receipts.
             </div>
           )}
 
