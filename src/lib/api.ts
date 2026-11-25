@@ -88,6 +88,10 @@ export function miniappLink(initData: string): Promise<{ ok: boolean }> {
   return request("POST", "/api/miniapp/link", { initData });
 }
 
+export function miniappUnlink(): Promise<{ ok: boolean; message: string }> {
+  return request("POST", "/api/miniapp/unlink");
+}
+
 function getTgInitData(): string | undefined {
   if (typeof window === "undefined") return undefined;
   return window.Telegram?.WebApp?.initData || undefined;

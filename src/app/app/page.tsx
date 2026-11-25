@@ -119,6 +119,9 @@ export default function MiniAppPage() {
   }, [screen, activeTab]);
 
   function handleAuthSuccess(token: string, profile: UserProfile, _isCashier?: boolean) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("cf_logged_out");
+    }
     saveToken(token);
     setUser(profile);
     navHistoryRef.current = [];

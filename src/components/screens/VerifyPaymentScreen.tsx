@@ -375,7 +375,7 @@ export default function VerifyPaymentScreen({
             });
 
       const parsedExpected = amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined;
-      const targetProvider = stagedProvider || provider;
+      const targetProvider = stagedProvider;
       const res = await verifyImageWithProgress(payload, parsedExpected, targetProvider);
       setResult(res);
       handleResultHaptic(res.status);
@@ -533,7 +533,6 @@ export default function VerifyPaymentScreen({
         <LiveReceiptScanner
           onClose={closeScanner}
           expectedAmount={amount && !isNaN(parseFloat(amount)) ? parseFloat(amount) : undefined}
-          provider={provider}
           onVerified={(verifiedRes) => {
             setResult(verifiedRes);
             closeScanner();
@@ -737,40 +736,6 @@ export default function VerifyPaymentScreen({
       {/* ── PHOTO / SCAN ACTIONS ── */}
       {tab === "photo" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {/* Bank / Provider Selector for Photo Verification */}
-          <div className="cf-vp-prov-row" style={{ marginBottom: "2px" }}>
-            {(["CBE", "TELEBIRR"] as const).map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={`cf-vp-prov-btn ${(stagedProvider || provider) === p ? "active" : ""}`}
-                onClick={() => {
-                  haptic("selection");
-                  setProvider(p);
-                  setStagedProvider(p);
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px",
-                }}
-              >
-                {p === "CBE" ? (
-                  <>
-                    <CbeLogo size={18} />
-                    <span>CBE Bank</span>
-                  </>
-                ) : (
-                  <>
-                    <TelebirrLogo size={18} />
-                    <span>Telebirr</span>
-                  </>
-                )}
-              </button>
-            ))}
-          </div>
-
           {stagedFile ? (
             <div className="cf-vp-staged-wrap">
               <div className="cf-vp-cta-row">

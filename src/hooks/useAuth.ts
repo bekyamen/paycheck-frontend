@@ -13,6 +13,7 @@ export function useAuth() {
 
   const saveToken = useCallback((t: string) => {
     if (typeof window !== "undefined") {
+      localStorage.removeItem("cf_logged_out");
       localStorage.setItem("cf_token", t);
     }
     setToken(t);
@@ -25,10 +26,28 @@ export function useAuth() {
       // Ignore network errors on logout
     }
     if (typeof window !== "undefined") {
+      // Explicitly mark user as logged out to prevent blind auto-login with platform initData
+      localStorage.setItem("cf_logged_out", "true");
       localStorage.removeItem("cf_token");
+      localStorage.removeItem("cf_user");
+      try {
+        sessionStorage.clear();
+      } catch {}
+      try {
+        // Clear client-accessible cookies
+        document.cookie.split(";").forEach((c) => {
+          document.cookie = c
+            .replace(/^ +/, "")
+            .replace(/=.*/, "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/");
+          document.cookie = c
+            .replace(/^ +/, "")
+            .replace(/=.*/, "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/app");
+        });
+      } catch {}
     }
     setToken(null);
     setUser(null);
+    setError(null);
     setScreen("login");
   }, []);
 
@@ -44,6 +63,7 @@ export function useAuth() {
     } catch {
       if (typeof window !== "undefined") {
         localStorage.removeItem("cf_token");
+        localStorage.removeItem("cf_user");
       }
       setToken(null);
       setUser(null);
@@ -56,6 +76,19 @@ export function useAuth() {
     async function boot() {
       setScreen("loading");
       setError(null);
+
+      // Check if the user explicitly chose to sign out
+      const isExplicitlyLoggedOut =
+        typeof window !== "undefined" &&
+        localStorage.getItem("cf_logged_out") === "true";
+
+      // If user explicitly signed out, do NOT blindly auto-login with platform initData
+      if (isExplicitlyLoggedOut) {
+        setToken(null);
+        setUser(null);
+        setScreen("login");
+        return;
+      }
 
       const initData = getInitData();
 
