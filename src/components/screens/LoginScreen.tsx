@@ -19,8 +19,6 @@ export default function LoginScreen({
 
   // Cashier credentials (password only)
   const [cashierPassword, setCashierPassword] = useState("");
-  const [showOptionalName, setShowOptionalName] = useState(false);
-  const [cashierFullName, setCashierFullName] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [tgLoading, setTgLoading] = useState(false);
@@ -92,7 +90,6 @@ export default function LoginScreen({
     try {
       const res = await cashierPasswordLogin({
         password: cashierPassword,
-        fullName: cashierFullName.trim() || undefined,
       });
       haptic("success");
       showToast(`Welcome, ${res.cashier.fullName}!`, "success");
@@ -360,40 +357,6 @@ export default function LoginScreen({
                 <span className="text-danger text-sm">{errors.cashierPassword}</span>
               )}
             </div>
-
-            {!showOptionalName ? (
-              <button
-                type="button"
-                onClick={() => setShowOptionalName(true)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--tg-theme-hint-color, #8e8e93)",
-                  fontSize: "12px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  padding: "2px 0",
-                  textDecoration: "underline",
-                }}
-              >
-                + Add your name for receipts (optional)
-              </button>
-            ) : (
-              <div className="form-group">
-                <label className="form-label" htmlFor="cashier-name">
-                  Your Name (Optional)
-                </label>
-                <input
-                  id="cashier-name"
-                  className="form-input"
-                  type="text"
-                  placeholder="e.g. Almaz Kebede"
-                  value={cashierFullName}
-                  onChange={(e) => setCashierFullName(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-            )}
 
             <button
               id="cashier-login-submit"
