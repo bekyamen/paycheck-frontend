@@ -31,7 +31,7 @@ export default function LoadingScreen() {
 
       <div style={{ textAlign: "center", animation: "fadeIn 0.5s ease 0.2s both" }}>
         <h1 style={{ fontSize: "22px", fontWeight: 800, marginBottom: "6px" }}>
-          CF Verification
+          paycheck Verification
         </h1>
         <p style={{ color: "var(--tg-theme-hint-color)", fontSize: "14px" }}>
           Connecting securely…

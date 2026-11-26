@@ -3,7 +3,7 @@ import "./globals.css";
 import Script from "next/script";
 
 export const metadata: Metadata = {
-  title: "CF Verification — Bank Accounts",
+  title: "Paycheck Verification — Bank Accounts",
   description: "Manage your bank accounts securely via Telegram Mini App.",
 };
 

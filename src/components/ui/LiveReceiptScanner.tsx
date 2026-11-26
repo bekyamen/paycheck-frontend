@@ -571,7 +571,7 @@ export default function LiveReceiptScanner({
       }
 
       try {
-        const compressed = await cropAndCompressVideoFrame(video, video, {
+        const compressed = await cropAndCompressVideoFrame(video, null, {
           maxWidth: 1400,
           maxHeight: 2600,
           bleedRatio: 0,
@@ -609,11 +609,11 @@ export default function LiveReceiptScanner({
       const video = videoRef.current;
       if (!video || !video.videoWidth || video.readyState < 2) return;
 
-      // Negative bleedRatio insets by 8% per edge inside the visible stage between top bar and dock
+      // Analyze sharpness and motion over full camera view
       const crop = computeVideoFrameCrop(
         video,
-        stageRef.current || video,
-        stageRef.current ? -0.08 : 0,
+        null,
+        0,
         facingMode === "user"
       );
       if (!crop) return;
@@ -1106,33 +1106,12 @@ export default function LiveReceiptScanner({
               </div>
             </div>
           ) : (
-            <>
-              {isStarting && (
-                <div className="cf-sc-starting">
-                  <div className="cf-sc-spinner" />
-                  <span>Starting camera...</span>
-                </div>
-              )}
-
-              {!isStarting && (
-                <div
-                  className={`cf-sc-tip-pill ${
-                    qualityState === "sharp"
-                      ? "state-sharp"
-                      : qualityState === "dark" || qualityState === "moving"
-                      ? "state-warn"
-                      : ""
-                  }`}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 18h6" />
-                    <path d="M10 22h4" />
-                    <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
-                  </svg>
-                  <span>{qualityText}</span>
-                </div>
-              )}
-            </>
+            isStarting ? (
+              <div className="cf-sc-starting">
+                <div className="cf-sc-spinner" />
+                <span>Starting camera...</span>
+              </div>
+            ) : null
           )}
         </div>
 
