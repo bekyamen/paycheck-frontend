@@ -1216,14 +1216,27 @@ export default function VerifyPaymentScreen({
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "17px" }}>👥</span>
                   <strong style={{ fontSize: "14px" }}>
-                    {result.to_name ||
-                      (result.raw as any)?.to_name ||
-                      result.receiverName ||
-                      (result.raw as any)?.pdf_link_data?.to_name ||
-                      (result.raw as any)?.link_receipt_data?.credited_party_name ||
-                      result.receivingAccount ||
-                      result.payerName ||
-                      "SADA"}
+                    {(() => {
+                      const candidate =
+                        result.to_name ||
+                        (result.raw as any)?.to_name ||
+                        result.receiverName ||
+                        result.receiverParty ||
+                        (result.raw as any)?.pdf_link_data?.to_name ||
+                        (result.raw as any)?.link_receipt_data?.credited_party_name ||
+                        result.accountHolderName;
+                      if (candidate && typeof candidate === "string" && candidate.trim()) {
+                        return candidate.trim();
+                      }
+                      if (
+                        result.receivingAccount &&
+                        !/[*]/.test(result.receivingAccount) &&
+                        isNaN(Number(result.receivingAccount))
+                      ) {
+                        return result.receivingAccount;
+                      }
+                      return result.payerName || "SADA";
+                    })()}
                   </strong>
                 </div>
               </div>
@@ -1344,7 +1357,7 @@ export default function VerifyPaymentScreen({
               : "Failed";
             const dotColor = isVerified ? "#22c55e" : isMismatch || isPending ? "#f59e0b" : "#ef4444";
 
-            const sub = tx.payerName || (tx.receivingAccount ? `To ${tx.receivingAccount}` : "Receipt check");
+            const sub = (tx as any).receiverName || tx.payerName || (tx.receivingAccount ? `To ${tx.receivingAccount}` : "Receipt check");
             const { dateText, agoText } = formatRecentTimestamp(tx.verifiedAt || tx.createdAt);
 
             return (

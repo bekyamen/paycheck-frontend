@@ -289,6 +289,8 @@ export interface VerificationResult {
   payerName?: string;
   payerPhone?: string;
   receiverName?: string;
+  receiverParty?: string;
+  accountHolderName?: string;
   receivingAccount?: string;
   transactionDate?: string;
   verifiedAt?: string;
