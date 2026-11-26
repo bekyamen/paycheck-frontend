@@ -48,102 +48,33 @@ export default function LoginScreen({
 
     const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null;
 
-    if (!tg) {
-      showToast("Telegram WebApp not detected. Please open via Telegram.", "error");
-      return;
-    }
-
-    if (typeof tg.requestContact !== "function") {
-      showToast("Telegram contact request is not supported on this client version.", "error");
-      return;
-    }
-
     setTgLoading(true);
     haptic("selection");
 
-    let completed = false;
-
-    const processContactEvent = async (status: string, eventData?: any) => {
-      if (completed) return;
-      completed = true;
-
-      // Unsubscribe from contactRequested event
-      try {
-        tg.offEvent?.("contactRequested", onContactRequested);
-      } catch {}
-
-      // If status === 'cancelled', stop spinner immediately & reset button
-      if (status === "cancelled" || status === "denied" || !status) {
-        setTgLoading(false);
-        haptic("error");
-        showToast("Sign-in cancelled. Tap again whenever you are ready.", "info");
-        return;
-      }
-
-      // If status === 'sent', send signed contact payload & initData to backend
-      if (status === "sent") {
-        try {
-          const rawPhone =
-            eventData?.responseUnsafe?.contact?.phone_number ||
-            eventData?.contact?.phone_number ||
-            eventData?.phone_number;
-
-          const contact = eventData?.responseUnsafe?.contact || eventData?.contact;
-          const initData = tg.initData || "";
-
-          const res = await telegramPhoneLogin({
-            initData,
-            contact,
-            phone: rawPhone,
-          });
-
-          haptic("success");
-          showToast(res.message || "Signed in successfully!", "success");
-          onSuccess(res.token, res.user, res.user.role === "CASHIER");
-        } catch (err: any) {
-          haptic("error");
-          const errorMsg = err.message || "";
-          if (
-            err.statusCode === 404 ||
-            err.verificationResult?.notFound ||
-            errorMsg.toLowerCase().includes("not found")
-          ) {
-            const detectedPhone =
-              err.verificationResult?.phone ||
-              eventData?.responseUnsafe?.contact?.phone_number ||
-              eventData?.contact?.phone_number ||
-              "";
-            setUnregisteredPhone(detectedPhone);
-            showToast("Account not found. Please register first.", "error");
-          } else {
-            showToast(errorMsg || "Telegram sign-in failed. Please try again.", "error");
-          }
-        } finally {
-          setTgLoading(false);
-        }
-      } else {
-        setTgLoading(false);
-      }
-    };
-
-    const onContactRequested = (event: any) => {
-      const status = event?.status || (event?.sent ? "sent" : "cancelled");
-      processContactEvent(status, event);
-    };
-
     try {
-      tg.onEvent?.("contactRequested", onContactRequested);
-    } catch {}
-
-    try {
-      tg.requestContact((sent: boolean, event?: any) => {
-        const status = sent ? "sent" : "cancelled";
-        processContactEvent(status, event);
+      const initData = tg?.initData || "";
+      const res = await telegramPhoneLogin({
+        initData,
       });
-    } catch (e: any) {
-      completed = true;
+
+      haptic("success");
+      showToast(res.message || "Signed in successfully!", "success");
+      onSuccess(res.token, res.user, res.user.role === "CASHIER");
+    } catch (err: any) {
+      haptic("error");
+      const errorMsg = err.message || "";
+      if (
+        err.statusCode === 404 ||
+        err.verificationResult?.notFound ||
+        errorMsg.toLowerCase().includes("not found")
+      ) {
+        setUnregisteredPhone("unregistered");
+        showToast("Account not found. Please register first.", "error");
+      } else {
+        showToast(errorMsg || "Telegram sign-in failed. Please try again.", "error");
+      }
+    } finally {
       setTgLoading(false);
-      showToast("Could not request Telegram contact: " + e.message, "error");
     }
   }
 
@@ -363,10 +294,10 @@ export default function LoginScreen({
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  onClick={() => onGoRegister(unregisteredPhone)}
+                  onClick={() => onGoRegister()}
                   style={{ width: "100%", fontSize: "13px" }}
                 >
-                  Register Account with {unregisteredPhone}
+                  Create an Account
                 </button>
               </div>
             )}

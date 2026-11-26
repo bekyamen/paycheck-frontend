@@ -121,6 +121,7 @@ export function getMe(): Promise<{ user: UserProfile }> {
 
 export interface RegisterPayload {
   fullName: string;
+  phone: string;
   accountType: "business" | "personal";
   businessName?: string;
   branchCount?: number;

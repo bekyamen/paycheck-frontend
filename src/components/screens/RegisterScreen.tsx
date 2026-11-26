@@ -11,6 +11,8 @@ interface RegisterScreenProps {
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
+const PHONE_REGEX = /^(?:\+251|0)?[97]\d{8}$/;
+
 export default function RegisterScreen({
   initialPhone,
   onSuccess,
@@ -18,13 +20,11 @@ export default function RegisterScreen({
   showToast,
 }: RegisterScreenProps) {
   const [fullName, setFullName] = useState("");
-  const [verifiedPhone, setVerifiedPhone] = useState("");
-  const [verifiedContact, setVerifiedContact] = useState<any>(null);
+  const [phone, setPhone] = useState(initialPhone || "");
   const [accountType, setAccountType] = useState<"business" | "personal">("business");
   const [businessName, setBusinessName] = useState("");
   const [branchCount, setBranchCount] = useState<number>(1);
 
-  const [requestingContact, setRequestingContact] = useState(false);
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
@@ -35,7 +35,7 @@ export default function RegisterScreen({
       phoneToUse = sessionStorage.getItem("prefill_phone") || "";
     }
     if (phoneToUse) {
-      setVerifiedPhone(phoneToUse);
+      setPhone(phoneToUse);
     }
 
     // Also pre-fill name from Telegram WebApp user if available
@@ -49,6 +49,8 @@ export default function RegisterScreen({
   // Validation errors
   const errors: Record<string, string> = {};
   const trimmedName = fullName.trim();
+  const cleanedPhone = phone.trim().replace(/[\s\-()]/g, "");
+
   if (touched.fullName || trimmedName.length > 0) {
     if (trimmedName.length < 2) {
       errors.fullName = "Full name must be at least 2 characters";
@@ -57,8 +59,12 @@ export default function RegisterScreen({
     }
   }
 
-  if (touched.phone && !verifiedPhone) {
-    errors.phone = "Please share your phone number via Telegram";
+  if (touched.phone || cleanedPhone.length > 0) {
+    if (!cleanedPhone) {
+      errors.phone = "Phone number is required";
+    } else if (!PHONE_REGEX.test(cleanedPhone)) {
+      errors.phone = "Please enter a valid Ethiopian phone number (e.g. 0912345678 or +2519...)";
+    }
   }
 
   if (accountType === "business") {
@@ -81,7 +87,7 @@ export default function RegisterScreen({
 
   // Is form valid for enabling submission button
   const isNameValid = trimmedName.length >= 2 && trimmedName.length <= 60;
-  const isPhoneValid = !!verifiedPhone;
+  const isPhoneValid = PHONE_REGEX.test(cleanedPhone);
   const isBusinessValid =
     accountType === "personal" ||
     (businessName.trim().length >= 2 &&
@@ -97,78 +103,6 @@ export default function RegisterScreen({
     if (type === "personal") {
       setBusinessName("");
       setBranchCount(1);
-    }
-  }
-
-  function handleRequestContact() {
-    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null;
-    if (!tg) {
-      showToast("Telegram WebApp not detected", "error");
-      return;
-    }
-    if (typeof tg.requestContact !== "function") {
-      showToast("Contact sharing is not supported on this client version", "error");
-      return;
-    }
-
-    setRequestingContact(true);
-    haptic("selection");
-
-    let handled = false;
-    const onContact = (status: string, eventData?: any) => {
-      if (handled) return;
-      handled = true;
-      try {
-        tg.offEvent?.("contactRequested", onContactReq);
-      } catch {}
-      setRequestingContact(false);
-
-      if (status === "cancelled" || status === "denied" || !status) {
-        haptic("error");
-        showToast("Contact sharing cancelled", "info");
-        return;
-      }
-
-      if (status === "sent") {
-        const phone =
-          eventData?.responseUnsafe?.contact?.phone_number ||
-          eventData?.contact?.phone_number ||
-          eventData?.phone_number;
-        const contactObj = eventData?.responseUnsafe?.contact || eventData?.contact;
-
-        if (phone) {
-          setVerifiedPhone(phone);
-          if (contactObj) setVerifiedContact(contactObj);
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem("prefill_phone", phone);
-          }
-          haptic("success");
-          showToast("Phone number verified through Telegram!", "success");
-        } else {
-          haptic("error");
-          showToast("Failed to retrieve phone number from Telegram", "error");
-        }
-      }
-    };
-
-    const onContactReq = (event: any) => {
-      const status = event?.status || (event?.sent ? "sent" : "cancelled");
-      onContact(status, event);
-    };
-
-    try {
-      tg.onEvent?.("contactRequested", onContactReq);
-    } catch {}
-
-    try {
-      tg.requestContact((sent: boolean, event: any) => {
-        const status = sent ? "sent" : "cancelled";
-        onContact(status, event);
-      });
-    } catch (err: any) {
-      handled = true;
-      setRequestingContact(false);
-      showToast("Could not request contact: " + err.message, "error");
     }
   }
 
@@ -194,10 +128,10 @@ export default function RegisterScreen({
       const res = await register({
         initData,
         fullName: trimmedName,
+        phone: cleanedPhone,
         accountType,
         businessName: accountType === "business" ? businessName.trim() : undefined,
         branchCount: accountType === "business" ? Number(branchCount) : undefined,
-        contact: verifiedContact,
       });
 
       // Clear sign-out flags on successful registration
@@ -263,38 +197,20 @@ export default function RegisterScreen({
             <label className="form-label" htmlFor="reg-phone">
               Phone Number <span style={{ color: "#ff453a" }}>*</span>
             </label>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <input
-                id="reg-phone"
-                className={`form-input ${errors.phone ? "error" : ""}`}
-                type="text"
-                placeholder="Share phone via Telegram"
-                value={verifiedPhone}
-                readOnly
-                style={{ flex: 1, background: "rgba(255, 255, 255, 0.06)", cursor: "default" }}
-              />
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleRequestContact}
-                disabled={requestingContact || loading}
-                style={{
-                  width: "auto",
-                  padding: "12px 14px",
-                  whiteSpace: "nowrap",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  background: "linear-gradient(135deg, #0088cc 0%, #00a2ff 100%)",
-                }}
-              >
-                {requestingContact ? "Requesting..." : "📱 Share Phone"}
-              </button>
-            </div>
-            {verifiedPhone && (
-              <div style={{ fontSize: "12px", color: "#30d158", marginTop: "4px", fontWeight: 600 }}>
-                ✓ Verified through Telegram
-              </div>
-            )}
+            <input
+              id="reg-phone"
+              className={`form-input ${errors.phone ? "error" : ""}`}
+              type="tel"
+              placeholder="0912345678"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              onBlur={() => setTouched((p) => ({ ...p, phone: true }))}
+              autoComplete="tel"
+              disabled={loading}
+            />
+            <span className="form-hint" style={{ fontSize: "12px", color: "var(--tg-theme-hint-color, #8e8e93)", marginTop: "4px", display: "block" }}>
+              Accepts 09..., 07..., or +2519...
+            </span>
             {errors.phone && <span className="text-danger text-sm" style={{ color: "#ff453a", fontSize: "12px", marginTop: "4px", display: "block" }}>{errors.phone}</span>}
           </div>
 
