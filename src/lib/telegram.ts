@@ -28,6 +28,9 @@ export interface TelegramWebApp {
   close(): void;
   showAlert(message: string, callback?: () => void): void;
   showConfirm(message: string, callback: (confirmed: boolean) => void): void;
+  requestContact?(callback?: (sent: boolean, event?: any) => void): void;
+  onEvent?(eventType: string, callback: (...args: any[]) => void): void;
+  offEvent?(eventType: string, callback: (...args: any[]) => void): void;
   HapticFeedback: {
     impactOccurred(style: "light" | "medium" | "heavy" | "rigid" | "soft"): void;
     notificationOccurred(type: "error" | "success" | "warning"): void;

@@ -32,6 +32,7 @@ export default function MiniAppPage() {
       ? selectedTab
       : rootTab;
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [prefillPhone, setPrefillPhone] = useState<string>("");
   const navHistoryRef = useRef<NavTab[]>([]);
   const activeTabRef = useRef<NavTab>(activeTab);
   const handlingPopRef = useRef(false);
@@ -120,6 +121,7 @@ export default function MiniAppPage() {
 
   function handleAuthSuccess(token: string, profile: UserProfile, _isCashier?: boolean) {
     if (typeof window !== "undefined") {
+      localStorage.removeItem("manual_logout");
       localStorage.removeItem("cf_logged_out");
     }
     saveToken(token);
@@ -154,6 +156,7 @@ export default function MiniAppPage() {
       <>
         <ToastContainer toasts={toasts} onRemove={removeToast} />
         <RegisterScreen
+          initialPhone={prefillPhone}
           onSuccess={(token, profile) => handleAuthSuccess(token, profile, false)}
           onGoLogin={() => setScreen("login")}
           showToast={showToast}
@@ -168,7 +171,10 @@ export default function MiniAppPage() {
         <ToastContainer toasts={toasts} onRemove={removeToast} />
         <LoginScreen
           onSuccess={handleAuthSuccess}
-          onGoRegister={() => setScreen("register")}
+          onGoRegister={(phone?: string) => {
+            if (phone) setPrefillPhone(phone);
+            setScreen("register");
+          }}
           showToast={showToast}
         />
       </>

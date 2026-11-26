@@ -1,68 +1,223 @@
 "use client";
-import { useState } from "react";
-import PinInput from "@/components/ui/PinInput";
+import { useState, useEffect } from "react";
 import { register } from "@/lib/api";
-import { haptic } from "@/lib/telegram";
+import { haptic, getInitData } from "@/lib/telegram";
 import type { UserProfile } from "@/lib/api";
 
 interface RegisterScreenProps {
+  initialPhone?: string;
   onSuccess: (token: string, user: UserProfile) => void;
   onGoLogin: () => void;
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-const PHONE_REGEX = /^(?:\+251|0)?[97]\d{8}$/;
-
-export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: RegisterScreenProps) {
+export default function RegisterScreen({
+  initialPhone,
+  onSuccess,
+  onGoLogin,
+  showToast,
+}: RegisterScreenProps) {
   const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [pin, setPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [accountType, setAccountType] = useState<"BUSINESS" | "PERSONAL">("BUSINESS");
+  const [verifiedPhone, setVerifiedPhone] = useState("");
+  const [verifiedContact, setVerifiedContact] = useState<any>(null);
+  const [accountType, setAccountType] = useState<"business" | "personal">("business");
+  const [businessName, setBusinessName] = useState("");
+  const [branchCount, setBranchCount] = useState<number>(1);
+
+  const [requestingContact, setRequestingContact] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
-  function validate() {
-    const e: Record<string, string> = {};
-    const cleanPhone = phone.replace(/[\s\-()]/g, "");
-
-    if (!fullName.trim() || fullName.trim().length < 2) {
-      e.fullName = "Full name must be at least 2 characters";
+  // Pre-fill phone from props or sessionStorage
+  useEffect(() => {
+    let phoneToUse = initialPhone || "";
+    if (!phoneToUse && typeof window !== "undefined") {
+      phoneToUse = sessionStorage.getItem("prefill_phone") || "";
     }
-    if (!PHONE_REGEX.test(cleanPhone)) {
-      e.phone = "Enter a valid Ethiopian phone number (e.g. 0912345678 or +251912345678)";
-    }
-    if (!/^\d{4}$/.test(pin)) {
-      e.pin = "PIN must be exactly 4 digits";
-    }
-    if (pin !== confirmPin) {
-      e.confirmPin = "PINs do not match";
+    if (phoneToUse) {
+      setVerifiedPhone(phoneToUse);
     }
 
-    setErrors(e);
-    return Object.keys(e).length === 0;
+    // Also pre-fill name from Telegram WebApp user if available
+    if (typeof window !== "undefined" && window.Telegram?.WebApp?.initDataUnsafe?.user) {
+      const u = window.Telegram.WebApp.initDataUnsafe.user;
+      const tgName = [u.first_name, u.last_name].filter(Boolean).join(" ");
+      if (tgName) setFullName(tgName);
+    }
+  }, [initialPhone]);
+
+  // Validation errors
+  const errors: Record<string, string> = {};
+  const trimmedName = fullName.trim();
+  if (touched.fullName || trimmedName.length > 0) {
+    if (trimmedName.length < 2) {
+      errors.fullName = "Full name must be at least 2 characters";
+    } else if (trimmedName.length > 60) {
+      errors.fullName = "Full name must not exceed 60 characters";
+    }
+  }
+
+  if (touched.phone && !verifiedPhone) {
+    errors.phone = "Please share your phone number via Telegram";
+  }
+
+  if (accountType === "business") {
+    const trimmedBiz = businessName.trim();
+    if (touched.businessName || trimmedBiz.length > 0) {
+      if (trimmedBiz.length < 2) {
+        errors.businessName = "Business name must be at least 2 characters";
+      } else if (trimmedBiz.length > 80) {
+        errors.businessName = "Business name cannot exceed 80 characters";
+      }
+    }
+    if (touched.branchCount) {
+      if (isNaN(branchCount) || branchCount < 1) {
+        errors.branchCount = "Number of branches must be at least 1";
+      } else if (branchCount > 500) {
+        errors.branchCount = "Number of branches cannot exceed 500";
+      }
+    }
+  }
+
+  // Is form valid for enabling submission button
+  const isNameValid = trimmedName.length >= 2 && trimmedName.length <= 60;
+  const isPhoneValid = !!verifiedPhone;
+  const isBusinessValid =
+    accountType === "personal" ||
+    (businessName.trim().length >= 2 &&
+      businessName.trim().length <= 80 &&
+      branchCount >= 1 &&
+      branchCount <= 500);
+
+  const canSubmit = isNameValid && isPhoneValid && isBusinessValid && !loading;
+
+  function handleAccountTypeChange(type: "business" | "personal") {
+    haptic("selection");
+    setAccountType(type);
+    if (type === "personal") {
+      setBusinessName("");
+      setBranchCount(1);
+    }
+  }
+
+  function handleRequestContact() {
+    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null;
+    if (!tg) {
+      showToast("Telegram WebApp not detected", "error");
+      return;
+    }
+    if (typeof tg.requestContact !== "function") {
+      showToast("Contact sharing is not supported on this client version", "error");
+      return;
+    }
+
+    setRequestingContact(true);
+    haptic("selection");
+
+    let handled = false;
+    const onContact = (status: string, eventData?: any) => {
+      if (handled) return;
+      handled = true;
+      try {
+        tg.offEvent?.("contactRequested", onContactReq);
+      } catch {}
+      setRequestingContact(false);
+
+      if (status === "cancelled" || status === "denied" || !status) {
+        haptic("error");
+        showToast("Contact sharing cancelled", "info");
+        return;
+      }
+
+      if (status === "sent") {
+        const phone =
+          eventData?.responseUnsafe?.contact?.phone_number ||
+          eventData?.contact?.phone_number ||
+          eventData?.phone_number;
+        const contactObj = eventData?.responseUnsafe?.contact || eventData?.contact;
+
+        if (phone) {
+          setVerifiedPhone(phone);
+          if (contactObj) setVerifiedContact(contactObj);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("prefill_phone", phone);
+          }
+          haptic("success");
+          showToast("Phone number verified through Telegram!", "success");
+        } else {
+          haptic("error");
+          showToast("Failed to retrieve phone number from Telegram", "error");
+        }
+      }
+    };
+
+    const onContactReq = (event: any) => {
+      const status = event?.status || (event?.sent ? "sent" : "cancelled");
+      onContact(status, event);
+    };
+
+    try {
+      tg.onEvent?.("contactRequested", onContactReq);
+    } catch {}
+
+    try {
+      tg.requestContact((sent: boolean, event: any) => {
+        const status = sent ? "sent" : "cancelled";
+        onContact(status, event);
+      });
+    } catch (err: any) {
+      handled = true;
+      setRequestingContact(false);
+      showToast("Could not request contact: " + err.message, "error");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!validate()) {
+    setTouched({
+      fullName: true,
+      phone: true,
+      businessName: true,
+      branchCount: true,
+    });
+
+    if (!canSubmit) {
       haptic("error");
       return;
     }
+
     setLoading(true);
+    haptic("selection");
+
     try {
+      const initData = getInitData();
       const res = await register({
-        fullName: fullName.trim(),
-        phone: phone.replace(/[\s\-()]/g, ""),
-        pinCode: pin,
+        initData,
+        fullName: trimmedName,
         accountType,
+        businessName: accountType === "business" ? businessName.trim() : undefined,
+        branchCount: accountType === "business" ? Number(branchCount) : undefined,
+        contact: verifiedContact,
       });
+
+      // Clear sign-out flags on successful registration
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("manual_logout");
+        localStorage.removeItem("cf_logged_out");
+        localStorage.setItem("cf_token", res.token);
+      }
+
       haptic("success");
       showToast(res.message || "Account created successfully! Welcome 🎉", "success");
       onSuccess(res.token, res.user);
-    } catch (err: unknown) {
+    } catch (err: any) {
       haptic("error");
-      showToast((err as Error).message || "Registration failed. Please check your details.", "error");
+      const msg = err.message || "Registration failed. Please check your details.";
+      if (msg.includes("already exists") || msg.includes("already registered")) {
+        showToast("Account already exists. Please sign in.", "error");
+      } else {
+        showToast(msg, "error");
+      }
     } finally {
       setLoading(false);
     }
@@ -70,21 +225,24 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
 
   return (
     <div className="screen">
-      <div className="screen-header">
-        <h1 className="screen-title">Create Admin Account</h1>
+      <div className="screen-header" style={{ textAlign: "center", padding: "28px 16px 20px" }}>
+        <div style={{ fontSize: "40px", marginBottom: "8px" }}>✨</div>
+        <h1 className="screen-title" style={{ fontSize: "24px", fontWeight: 800 }}>Create Account</h1>
         <p className="text-muted text-sm" style={{ marginTop: "4px" }}>
-          Register your business and set up payment verification
+          Fast passwordless registration with your Telegram identity
         </p>
       </div>
 
-      <div className="screen-content" style={{ maxWidth: "460px", margin: "0 auto", width: "100%" }}>
+      <div className="screen-content" style={{ maxWidth: "460px", margin: "0 auto", width: "100%", padding: "0 16px 40px" }}>
         <form
           onSubmit={handleSubmit}
-          style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}
+          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
         >
-          {/* Full Name */}
+          {/* a) Your Full Name */}
           <div className="form-group">
-            <label className="form-label" htmlFor="reg-fullname">Your Full Name</label>
+            <label className="form-label" htmlFor="reg-fullname">
+              Your Full Name <span style={{ color: "#ff453a" }}>*</span>
+            </label>
             <input
               id="reg-fullname"
               className={`form-input ${errors.fullName ? "error" : ""}`}
@@ -92,66 +250,99 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
               placeholder="e.g. Dawit Haile"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
+              onBlur={() => setTouched((p) => ({ ...p, fullName: true }))}
               autoComplete="name"
               disabled={loading}
               autoFocus
             />
-            {errors.fullName && <span className="text-danger text-sm">{errors.fullName}</span>}
+            {errors.fullName && <span className="text-danger text-sm" style={{ color: "#ff453a", fontSize: "12px", marginTop: "4px", display: "block" }}>{errors.fullName}</span>}
           </div>
 
-          {/* Phone */}
+          {/* b) Phone Number */}
           <div className="form-group">
-            <label className="form-label" htmlFor="reg-phone">Phone Number</label>
-            <input
-              id="reg-phone"
-              className={`form-input ${errors.phone ? "error" : ""}`}
-              type="tel"
-              placeholder="0912345678"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              autoComplete="tel"
-              disabled={loading}
-            />
-            {errors.phone && <span className="text-danger text-sm">{errors.phone}</span>}
+            <label className="form-label" htmlFor="reg-phone">
+              Phone Number <span style={{ color: "#ff453a" }}>*</span>
+            </label>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input
+                id="reg-phone"
+                className={`form-input ${errors.phone ? "error" : ""}`}
+                type="text"
+                placeholder="Share phone via Telegram"
+                value={verifiedPhone}
+                readOnly
+                style={{ flex: 1, background: "rgba(255, 255, 255, 0.06)", cursor: "default" }}
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleRequestContact}
+                disabled={requestingContact || loading}
+                style={{
+                  width: "auto",
+                  padding: "12px 14px",
+                  whiteSpace: "nowrap",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  background: "linear-gradient(135deg, #0088cc 0%, #00a2ff 100%)",
+                }}
+              >
+                {requestingContact ? "Requesting..." : "📱 Share Phone"}
+              </button>
+            </div>
+            {verifiedPhone && (
+              <div style={{ fontSize: "12px", color: "#30d158", marginTop: "4px", fontWeight: 600 }}>
+                ✓ Verified through Telegram
+              </div>
+            )}
+            {errors.phone && <span className="text-danger text-sm" style={{ color: "#ff453a", fontSize: "12px", marginTop: "4px", display: "block" }}>{errors.phone}</span>}
           </div>
 
-          {/* Account Type */}
+          {/* c) Account Type (Segmented control) */}
           <div className="form-group">
-            <label className="form-label" htmlFor="reg-type">Account Type</label>
+            <label className="form-label">
+              Account Type <span style={{ color: "#ff453a" }}>*</span>
+            </label>
             <div
               style={{
                 display: "flex",
-                gap: "10px",
+                background: "var(--tg-theme-secondary-bg-color, #2c2c2e)",
+                borderRadius: "10px",
+                padding: "4px",
               }}
             >
               <button
                 type="button"
-                onClick={() => setAccountType("BUSINESS")}
+                onClick={() => handleAccountTypeChange("business")}
                 style={{
                   flex: 1,
-                  padding: "12px",
-                  borderRadius: "var(--radius-sm)",
-                  border: accountType === "BUSINESS" ? "2px solid var(--tg-theme-button-color, #0a84ff)" : "1px solid var(--glass-border)",
-                  background: accountType === "BUSINESS" ? "rgba(10, 132, 255, 0.15)" : "var(--tg-theme-secondary-bg-color, #2c2c2e)",
-                  color: accountType === "BUSINESS" ? "var(--tg-theme-button-color, #0a84ff)" : "var(--tg-theme-text-color)",
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "none",
                   fontWeight: 600,
+                  fontSize: "14px",
                   cursor: "pointer",
+                  background: accountType === "business" ? "var(--tg-theme-button-color, #0088cc)" : "transparent",
+                  color: accountType === "business" ? "#ffffff" : "var(--tg-theme-hint-color, #8e8e93)",
+                  transition: "all 0.2s ease",
                 }}
               >
                 🏢 Business
               </button>
               <button
                 type="button"
-                onClick={() => setAccountType("PERSONAL")}
+                onClick={() => handleAccountTypeChange("personal")}
                 style={{
                   flex: 1,
-                  padding: "12px",
-                  borderRadius: "var(--radius-sm)",
-                  border: accountType === "PERSONAL" ? "2px solid var(--tg-theme-button-color, #0a84ff)" : "1px solid var(--glass-border)",
-                  background: accountType === "PERSONAL" ? "rgba(10, 132, 255, 0.15)" : "var(--tg-theme-secondary-bg-color, #2c2c2e)",
-                  color: accountType === "PERSONAL" ? "var(--tg-theme-button-color, #0a84ff)" : "var(--tg-theme-text-color)",
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "none",
                   fontWeight: 600,
+                  fontSize: "14px",
                   cursor: "pointer",
+                  background: accountType === "personal" ? "var(--tg-theme-button-color, #0088cc)" : "transparent",
+                  color: accountType === "personal" ? "#ffffff" : "var(--tg-theme-hint-color, #8e8e93)",
+                  transition: "all 0.2s ease",
                 }}
               >
                 👤 Personal
@@ -159,30 +350,75 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
             </div>
           </div>
 
-          {/* 4-Digit PIN */}
-          <PinInput
-            label="Create 4-Digit PIN"
-            value={pin}
-            onChange={setPin}
-            error={errors.pin}
-          />
+          {/* d) Business fields (conditional) */}
+          {accountType === "business" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-bizname">
+                  Business Name <span style={{ color: "#ff453a" }}>*</span>
+                </label>
+                <input
+                  id="reg-bizname"
+                  className={`form-input ${errors.businessName ? "error" : ""}`}
+                  type="text"
+                  placeholder="e.g. Haile Trading Enterprise"
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  onBlur={() => setTouched((p) => ({ ...p, businessName: true }))}
+                  disabled={loading}
+                />
+                {errors.businessName && (
+                  <span className="text-danger text-sm" style={{ color: "#ff453a", fontSize: "12px", marginTop: "4px", display: "block" }}>
+                    {errors.businessName}
+                  </span>
+                )}
+              </div>
 
-          {/* Confirm PIN */}
-          <PinInput
-            label="Confirm 4-Digit PIN"
-            value={confirmPin}
-            onChange={setConfirmPin}
-            error={errors.confirmPin}
-          />
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-branchcount">
+                  Number of Branches <span style={{ color: "#ff453a" }}>*</span>
+                </label>
+                <input
+                  id="reg-branchcount"
+                  className={`form-input ${errors.branchCount ? "error" : ""}`}
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                  placeholder="1"
+                  value={branchCount}
+                  onChange={(e) => setBranchCount(parseInt(e.target.value, 10) || 1)}
+                  onBlur={() => setTouched((p) => ({ ...p, branchCount: true }))}
+                  disabled={loading}
+                />
+                <span className="form-hint" style={{ fontSize: "12px", color: "var(--tg-theme-hint-color, #8e8e93)", marginTop: "4px", display: "block" }}>
+                  Number of operational stores/branches (1 to 500)
+                </span>
+                {errors.branchCount && (
+                  <span className="text-danger text-sm" style={{ color: "#ff453a", fontSize: "12px", marginTop: "4px", display: "block" }}>
+                    {errors.branchCount}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
+          {/* Submit Button */}
           <button
             id="reg-submit"
             type="submit"
             className={`btn btn-primary ${loading ? "btn-loading" : ""}`}
-            disabled={loading}
-            style={{ marginTop: "12px" }}
+            disabled={!canSubmit}
+            style={{
+              marginTop: "8px",
+              padding: "14px",
+              fontSize: "15px",
+              fontWeight: 700,
+              opacity: canSubmit ? 1 : 0.5,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+            }}
           >
-            {loading ? "" : "Create Account & Get Started"}
+            {loading ? "Creating Account..." : "Create Account"}
           </button>
 
           <button
@@ -190,9 +426,10 @@ export default function RegisterScreen({ onSuccess, onGoLogin, showToast }: Regi
             className="btn btn-ghost"
             onClick={onGoLogin}
             disabled={loading}
-            style={{ textAlign: "center" }}
+            style={{ textAlign: "center", fontSize: "14px", color: "var(--tg-theme-hint-color, #8e8e93)" }}
           >
-            Already have an account? <span className="text-accent">Sign In</span>
+            Already have an account?{" "}
+            <span style={{ color: "var(--tg-theme-button-color, #0088cc)", fontWeight: 600 }}>Sign In</span>
           </button>
         </form>
       </div>

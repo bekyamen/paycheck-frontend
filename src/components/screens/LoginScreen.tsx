@@ -1,13 +1,12 @@
 "use client";
 import { useState } from "react";
-import PinInput from "@/components/ui/PinInput";
-import { login, cashierPasswordLogin } from "@/lib/api";
+import { cashierPasswordLogin, telegramPhoneLogin } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
 import type { UserProfile } from "@/lib/api";
 
 interface LoginScreenProps {
   onSuccess: (token: string, user: UserProfile, isCashier?: boolean) => void;
-  onGoRegister: () => void;
+  onGoRegister: (prefilledPhone?: string) => void;
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
@@ -18,29 +17,15 @@ export default function LoginScreen({
 }: LoginScreenProps) {
   const [mode, setMode] = useState<"admin" | "cashier">("admin");
 
-  // Admin credentials
-  const [phone, setPhone] = useState("");
-  const [pin, setPin] = useState("");
-
   // Cashier credentials (password only)
   const [cashierPassword, setCashierPassword] = useState("");
   const [showOptionalName, setShowOptionalName] = useState(false);
   const [cashierFullName, setCashierFullName] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [tgLoading, setTgLoading] = useState(false);
+  const [unregisteredPhone, setUnregisteredPhone] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
-
-  function validateAdmin() {
-    const e: Record<string, string> = {};
-    if (!/^\+?[0-9]{9,15}$/.test(phone.replace(/\s/g, ""))) {
-      e.phone = "Enter a valid phone number (e.g. 0912345678)";
-    }
-    if (pin.length !== 4) {
-      e.pin = "PIN must be exactly 4 digits";
-    }
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  }
 
   function validateCashier() {
     const e: Record<string, string> = {};
@@ -51,23 +36,114 @@ export default function LoginScreen({
     return Object.keys(e).length === 0;
   }
 
-  async function handleAdminSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!validateAdmin()) {
-      haptic("error");
+  async function handleTelegramSignIn() {
+    // Clear manual sign-out flag since the user explicitly tapped Sign In
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("manual_logout");
+      localStorage.removeItem("cf_logged_out");
+    }
+
+    setUnregisteredPhone(null);
+    setErrors({});
+
+    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null;
+
+    if (!tg) {
+      showToast("Telegram WebApp not detected. Please open via Telegram.", "error");
       return;
     }
-    setLoading(true);
+
+    if (typeof tg.requestContact !== "function") {
+      showToast("Telegram contact request is not supported on this client version.", "error");
+      return;
+    }
+
+    setTgLoading(true);
+    haptic("selection");
+
+    let completed = false;
+
+    const processContactEvent = async (status: string, eventData?: any) => {
+      if (completed) return;
+      completed = true;
+
+      // Unsubscribe from contactRequested event
+      try {
+        tg.offEvent?.("contactRequested", onContactRequested);
+      } catch {}
+
+      // If status === 'cancelled', stop spinner immediately & reset button
+      if (status === "cancelled" || status === "denied" || !status) {
+        setTgLoading(false);
+        haptic("error");
+        showToast("Sign-in cancelled. Tap again whenever you are ready.", "info");
+        return;
+      }
+
+      // If status === 'sent', send signed contact payload & initData to backend
+      if (status === "sent") {
+        try {
+          const rawPhone =
+            eventData?.responseUnsafe?.contact?.phone_number ||
+            eventData?.contact?.phone_number ||
+            eventData?.phone_number;
+
+          const contact = eventData?.responseUnsafe?.contact || eventData?.contact;
+          const initData = tg.initData || "";
+
+          const res = await telegramPhoneLogin({
+            initData,
+            contact,
+            phone: rawPhone,
+          });
+
+          haptic("success");
+          showToast(res.message || "Signed in successfully!", "success");
+          onSuccess(res.token, res.user, res.user.role === "CASHIER");
+        } catch (err: any) {
+          haptic("error");
+          const errorMsg = err.message || "";
+          if (
+            err.statusCode === 404 ||
+            err.verificationResult?.notFound ||
+            errorMsg.toLowerCase().includes("not found")
+          ) {
+            const detectedPhone =
+              err.verificationResult?.phone ||
+              eventData?.responseUnsafe?.contact?.phone_number ||
+              eventData?.contact?.phone_number ||
+              "";
+            setUnregisteredPhone(detectedPhone);
+            showToast("Account not found. Please register first.", "error");
+          } else {
+            showToast(errorMsg || "Telegram sign-in failed. Please try again.", "error");
+          }
+        } finally {
+          setTgLoading(false);
+        }
+      } else {
+        setTgLoading(false);
+      }
+    };
+
+    const onContactRequested = (event: any) => {
+      const status = event?.status || (event?.sent ? "sent" : "cancelled");
+      processContactEvent(status, event);
+    };
+
     try {
-      const res = await login(phone.trim(), pin);
-      haptic("success");
-      showToast(res.message || "Welcome back!", "success");
-      onSuccess(res.token, res.user, false);
-    } catch (err: unknown) {
-      haptic("error");
-      showToast((err as Error).message || "Invalid phone or PIN", "error");
-    } finally {
-      setLoading(false);
+      tg.onEvent?.("contactRequested", onContactRequested);
+    } catch {}
+
+    try {
+      tg.requestContact((sent: boolean, event?: any) => {
+        const status = sent ? "sent" : "cancelled";
+        processContactEvent(status, event);
+      });
+    } catch (e: any) {
+      completed = true;
+      setTgLoading(false);
+      showToast("Could not request Telegram contact: " + e.message, "error");
     }
   }
 
@@ -76,6 +152,10 @@ export default function LoginScreen({
     if (!validateCashier()) {
       haptic("error");
       return;
+    }
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("manual_logout");
+      localStorage.removeItem("cf_logged_out");
     }
     setLoading(true);
     try {
@@ -109,7 +189,7 @@ export default function LoginScreen({
         }}
       >
         {/* Brand header */}
-        <div style={{ textAlign: "center", marginBottom: "28px" }}>
+        <div style={{ textAlign: "center", marginBottom: "24px" }}>
           <div
             style={{
               width: "68px",
@@ -127,12 +207,12 @@ export default function LoginScreen({
             {mode === "admin" ? "🏦" : "⚡"}
           </div>
           <h1 style={{ fontSize: "24px", fontWeight: 800, marginBottom: "6px" }}>
-            {mode === "admin" ? "Business Admin Sign In" : "Cashier Sign In"}
+            Sign In
           </h1>
           <p className="text-muted text-sm">
             {mode === "admin"
-              ? "Sign in with your phone and 4-digit PIN"
-              : "Enter your cashier password to check payments"}
+              ? "Passwordless authentication via Telegram"
+              : "Sign in with your branch cashier password"}
           </p>
         </div>
 
@@ -143,7 +223,7 @@ export default function LoginScreen({
             background: "var(--tg-theme-secondary-bg-color, #2c2c2e)",
             borderRadius: "var(--radius-md)",
             padding: "4px",
-            marginBottom: "24px",
+            marginBottom: "20px",
           }}
         >
           <button
@@ -166,7 +246,7 @@ export default function LoginScreen({
               transition: "all 0.2s ease",
             }}
           >
-            Admin Sign In
+            Admin (Owner)
           </button>
           <button
             type="button"
@@ -188,94 +268,195 @@ export default function LoginScreen({
               transition: "all 0.2s ease",
             }}
           >
-            Cashier Sign In
+            Cashier (Staff)
           </button>
         </div>
 
-        {/* ── ADMIN LOGIN FORM ── */}
+        {/* ── ADMIN / OWNER PASSWORDLESS TELEGRAM SIGN IN ── */}
         {mode === "admin" ? (
-          <form onSubmit={handleAdminSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
-            <div className="form-group">
-              <label className="form-label" htmlFor="login-phone">Phone Number</label>
-              <input
-                id="login-phone"
-                className={`form-input ${errors.phone ? "error" : ""}`}
-                type="tel"
-                placeholder="0912345678"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                autoComplete="tel"
-                disabled={loading}
-              />
-              {errors.phone && <span className="text-danger text-sm">{errors.phone}</span>}
-            </div>
-
-            <PinInput
-              label="4-Digit PIN"
-              value={pin}
-              onChange={setPin}
-              error={errors.pin}
-              autoFocus
-            />
-
-            <button
-              id="login-submit"
-              type="submit"
-              className={`btn btn-primary ${loading ? "btn-loading" : ""}`}
-              disabled={loading}
-              style={{ marginTop: "8px" }}
+          <div
+            style={{
+              background: "var(--tg-theme-secondary-bg-color, #1c1c1e)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              borderRadius: "16px",
+              padding: "24px 18px",
+              textAlign: "center",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "14px",
+                color: "var(--tg-theme-hint-color, #8e8e93)",
+                marginBottom: "20px",
+                lineHeight: "1.4",
+              }}
             >
-              {loading ? "" : "Sign In as Admin"}
-            </button>
+              Administrators sign in instantly using their Telegram-verified phone number. No passwords or PINs required.
+            </p>
 
             <button
+              id="btn-tg-phone-login"
               type="button"
-              className="btn btn-ghost"
-              onClick={onGoRegister}
-              disabled={loading}
-              style={{ textAlign: "center", marginTop: "4px" }}
+              className="btn btn-primary"
+              onClick={handleTelegramSignIn}
+              disabled={tgLoading}
+              style={{
+                width: "100%",
+                padding: "15px",
+                fontSize: "16px",
+                fontWeight: 700,
+                borderRadius: "12px",
+                background: "linear-gradient(135deg, #0088cc 0%, #00a2ff 100%)",
+                boxShadow: "0 4px 16px rgba(0, 136, 204, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "10px",
+              }}
             >
-              {"Don't have an admin account? "}
-              <span className="text-accent" style={{ fontWeight: 600 }}>Create One</span>
+              {tgLoading ? (
+                <>
+                  <span
+                    className="spinner-sm"
+                    style={{
+                      display: "inline-block",
+                      width: "18px",
+                      height: "18px",
+                      border: "2px solid rgba(255,255,255,0.3)",
+                      borderTopColor: "#fff",
+                      borderRadius: "50%",
+                      animation: "spin 0.8s linear infinite",
+                    }}
+                  />
+                  <span>Signing in...</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: "18px" }}>✈️</span>
+                  <span>Sign In with Telegram</span>
+                </>
+              )}
             </button>
-          </form>
+
+            {/* Unregistered phone alert */}
+            {unregisteredPhone && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  borderRadius: "12px",
+                  padding: "14px",
+                  border: "1px solid var(--tg-theme-button-color, #0a84ff)",
+                  background: "rgba(10, 132, 255, 0.08)",
+                  textAlign: "center",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: "var(--tg-theme-text-color, #ffffff)",
+                    marginBottom: "8px",
+                  }}
+                >
+                  Account not found. Please register first.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => onGoRegister(unregisteredPhone)}
+                  style={{ width: "100%", fontSize: "13px" }}
+                >
+                  Register Account with {unregisteredPhone}
+                </button>
+              </div>
+            )}
+
+            <div style={{ textAlign: "center", marginTop: "24px", fontSize: "14px", color: "var(--tg-theme-hint-color, #8e8e93)" }}>
+              New business owner?{" "}
+              <button
+                type="button"
+                onClick={() => onGoRegister()}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: 0,
+                  color: "var(--tg-theme-button-color, #0088cc)",
+                  textDecoration: "none",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Create account
+              </button>
+            </div>
+          </div>
         ) : (
           /* ── CASHIER LOGIN FORM (PASSWORD ONLY) ── */
-          <form onSubmit={handleCashierSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
+          <form
+            onSubmit={handleCashierSubmit}
+            style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}
+          >
+            <div
+              style={{
+                background: "rgba(48, 209, 88, 0.1)",
+                border: "1px solid rgba(48, 209, 88, 0.25)",
+                borderRadius: "var(--radius-md)",
+                padding: "12px 14px",
+                marginBottom: "4px",
+              }}
+            >
+              <p style={{ fontSize: "13px", color: "#30d158", margin: 0, fontWeight: 500, lineHeight: 1.4 }}>
+                ⚡ Staff members enter only their branch password provided by the business admin.
+              </p>
+            </div>
+
             <div className="form-group">
-              <label className="form-label" htmlFor="cashier-password">Cashier Password</label>
+              <label className="form-label" htmlFor="cashier-password">
+                Cashier Password
+              </label>
               <input
                 id="cashier-password"
                 className={`form-input ${errors.cashierPassword ? "error" : ""}`}
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Enter branch cashier password"
                 value={cashierPassword}
                 onChange={(e) => setCashierPassword(e.target.value)}
                 autoComplete="current-password"
                 disabled={loading}
                 autoFocus
               />
-              {errors.cashierPassword && <span className="text-danger text-sm">{errors.cashierPassword}</span>}
+              {errors.cashierPassword && (
+                <span className="text-danger text-sm">{errors.cashierPassword}</span>
+              )}
             </div>
 
-            {/* Optional name disambiguation toggle */}
             {!showOptionalName ? (
               <button
                 type="button"
-                className="btn btn-ghost"
                 onClick={() => setShowOptionalName(true)}
-                style={{ fontSize: "12px", color: "var(--tg-theme-hint-color, #8e8e93)", padding: "4px" }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--tg-theme-hint-color, #8e8e93)",
+                  fontSize: "12px",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  padding: "2px 0",
+                  textDecoration: "underline",
+                }}
               >
-                + Optional: Specify your name if multiple cashiers share password
+                + Add your name for receipts (optional)
               </button>
             ) : (
               <div className="form-group">
-                <label className="form-label" htmlFor="cashier-name">Your Name (Optional)</label>
+                <label className="form-label" htmlFor="cashier-name">
+                  Your Name (Optional)
+                </label>
                 <input
                   id="cashier-name"
                   className="form-input"
                   type="text"
-                  placeholder="e.g. Almaz"
+                  placeholder="e.g. Almaz Kebede"
                   value={cashierFullName}
                   onChange={(e) => setCashierFullName(e.target.value)}
                   disabled={loading}
@@ -284,13 +465,19 @@ export default function LoginScreen({
             )}
 
             <button
-              id="cashier-submit"
+              id="cashier-login-submit"
               type="submit"
               className={`btn btn-primary ${loading ? "btn-loading" : ""}`}
               disabled={loading}
-              style={{ marginTop: "8px" }}
+              style={{
+                marginTop: "8px",
+                background: "#30d158",
+                color: "#000000",
+                fontWeight: 700,
+                border: "none",
+              }}
             >
-              {loading ? "" : "Sign In to Verify Payments"}
+              {loading ? "" : "Sign In as Cashier"}
             </button>
           </form>
         )}

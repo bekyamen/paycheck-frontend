@@ -92,6 +92,24 @@ export function miniappUnlink(): Promise<{ ok: boolean; message: string }> {
   return request("POST", "/api/miniapp/unlink");
 }
 
+export interface TelegramPhoneLoginPayload {
+  initData: string;
+  phone?: string;
+  contact?: {
+    phone_number?: string;
+    first_name?: string;
+    last_name?: string;
+    user_id?: number | string;
+  };
+  response?: string;
+}
+
+export function telegramPhoneLogin(
+  payload: TelegramPhoneLoginPayload
+): Promise<{ message: string; token: string; user: UserProfile }> {
+  return request("POST", "/api/auth/telegram-login", payload);
+}
+
 function getTgInitData(): string | undefined {
   if (typeof window === "undefined") return undefined;
   return window.Telegram?.WebApp?.initData || undefined;
@@ -103,9 +121,15 @@ export function getMe(): Promise<{ user: UserProfile }> {
 
 export interface RegisterPayload {
   fullName: string;
-  phone: string;
-  pinCode: string;
-  accountType: string; // "PERSONAL" | "BUSINESS"
+  accountType: "business" | "personal";
+  businessName?: string;
+  branchCount?: number;
+  contact?: {
+    phone_number?: string;
+    first_name?: string;
+    last_name?: string;
+    user_id?: number | string;
+  };
   initData?: string;
 }
 

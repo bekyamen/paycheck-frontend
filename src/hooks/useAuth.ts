@@ -13,6 +13,7 @@ export function useAuth() {
 
   const saveToken = useCallback((t: string) => {
     if (typeof window !== "undefined") {
+      localStorage.removeItem("manual_logout");
       localStorage.removeItem("cf_logged_out");
       localStorage.setItem("cf_token", t);
     }
@@ -26,7 +27,8 @@ export function useAuth() {
       // Ignore network errors on logout
     }
     if (typeof window !== "undefined") {
-      // Explicitly mark user as logged out to prevent blind auto-login with platform initData
+      // Explicitly mark manual sign-out flag so mini-app won't auto-authenticate on reopen
+      localStorage.setItem("manual_logout", "true");
       localStorage.setItem("cf_logged_out", "true");
       localStorage.removeItem("cf_token");
       localStorage.removeItem("cf_user");
@@ -77,13 +79,15 @@ export function useAuth() {
       setScreen("loading");
       setError(null);
 
-      // Check if the user explicitly chose to sign out
-      const isExplicitlyLoggedOut =
+      // Check if user manually signed out
+      const isManualLogout =
         typeof window !== "undefined" &&
-        localStorage.getItem("cf_logged_out") === "true";
+        (localStorage.getItem("manual_logout") === "true" ||
+         localStorage.getItem("cf_logged_out") === "true");
 
-      // If user explicitly signed out, do NOT blindly auto-login with platform initData
-      if (isExplicitlyLoggedOut) {
+      // If manual_logout === 'true', bypass any automatic Telegram session restoration
+      // and keep the user on the login page until they explicitly click 'Sign In' again
+      if (isManualLogout) {
         setToken(null);
         setUser(null);
         setScreen("login");
