@@ -12,6 +12,7 @@ import VerifyPaymentScreen from "@/components/screens/VerifyPaymentScreen";
 import AccountsScreen from "@/components/screens/AccountsScreen";
 import CashiersScreen from "@/components/screens/CashiersScreen";
 import ProfileScreen from "@/components/screens/ProfileScreen";
+import SupportScreen from "@/components/screens/SupportScreen";
 import { miniappLink, type UserProfile } from "@/lib/api";
 
 export default function MiniAppPage() {
@@ -28,7 +29,7 @@ export default function MiniAppPage() {
   // Derive active tab cleanly without synchronous setState in useEffect
   const [selectedTab, setSelectedTab] = useState<NavTab | null>(null);
   const activeTab: NavTab =
-    selectedTab && (isAdmin || selectedTab === "verify" || selectedTab === "profile")
+    selectedTab && (isAdmin || selectedTab === "verify" || selectedTab === "profile" || selectedTab === "support")
       ? selectedTab
       : rootTab;
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -254,6 +255,15 @@ export default function MiniAppPage() {
         <ProfileScreen
           user={user}
           onLogout={handleLogout}
+          onNavigate={(tab) => navigateTab(tab)}
+        />
+      )}
+
+      {/* Support & Contact (Both Admin and Cashier) */}
+      {activeTab === "support" && (
+        <SupportScreen
+          onBack={handleGoBack}
+          showToast={showToast}
         />
       )}
 

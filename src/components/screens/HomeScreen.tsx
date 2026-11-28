@@ -6,7 +6,7 @@ import { CbeLogo, TelebirrLogo } from "@/components/ui/BankLogos";
 
 interface HomeScreenProps {
   user: UserProfile;
-  onNavigate: (tab: "verify" | "accounts" | "cashiers" | "profile") => void;
+  onNavigate: (tab: "verify" | "accounts" | "cashiers" | "profile" | "support") => void;
   onQuickScan?: () => void;
 }
 
@@ -22,7 +22,7 @@ export default function HomeScreen({ user, onNavigate, onQuickScan }: HomeScreen
   const accountsCount = user.accountsCount ?? 2;
   const cashiersCount = user.cashiersCount ?? 1;
 
-  const handleAction = (tab: "verify" | "accounts" | "cashiers" | "profile") => {
+  const handleAction = (tab: "verify" | "accounts" | "cashiers" | "profile" | "support") => {
     haptic("selection");
     onNavigate(tab);
   };
@@ -626,6 +626,54 @@ export default function HomeScreen({ user, onNavigate, onQuickScan }: HomeScreen
               </strong>
               <p style={{ fontSize: "12px", color: "#8fa2bd", margin: "3px 0 0", lineHeight: 1.3 }}>
                 Branch info, phone number and sign out
+              </p>
+            </div>
+            <span style={{ fontSize: "20px", color: "#64748b", fontWeight: 600 }}>›</span>
+          </div>
+
+          {/* 5. Support & Contact */}
+          <div
+            onClick={() => handleAction("support")}
+            style={{
+              background: "rgba(10, 18, 36, 0.78)",
+              backdropFilter: "blur(12px)",
+              border: "1px solid rgba(255, 255, 255, 0.08)",
+              borderLeft: "3.5px solid #06b6d4",
+              borderRadius: "18px",
+              padding: "14px 16px",
+              display: "flex",
+              alignItems: "center",
+              gap: "14px",
+              cursor: "pointer",
+              boxShadow: "0 4px 20px rgba(0, 0, 0, 0.25)",
+              userSelect: "none",
+            }}
+          >
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "14px",
+                background: "linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                boxShadow: "0 4px 12px rgba(6, 182, 212, 0.3)",
+              }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong style={{ fontSize: "15.5px", fontWeight: 700, color: "#ffffff", display: "block" }}>
+                Support & Contact
+              </strong>
+              <p style={{ fontSize: "12px", color: "#8fa2bd", margin: "3px 0 0", lineHeight: 1.3 }}>
+                Live Telegram help, phone line & FAQs
               </p>
             </div>
             <span style={{ fontSize: "20px", color: "#64748b", fontWeight: 600 }}>›</span>

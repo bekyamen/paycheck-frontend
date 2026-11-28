@@ -28,6 +28,8 @@ export interface TelegramWebApp {
   close(): void;
   showAlert(message: string, callback?: () => void): void;
   showConfirm(message: string, callback: (confirmed: boolean) => void): void;
+  openTelegramLink?(url: string): void;
+  openLink?(url: string, options?: { try_instant_view?: boolean }): void;
   requestContact?(callback?: (sent: boolean, event?: any) => void): void;
   onEvent?(eventType: string, callback: (...args: any[]) => void): void;
   offEvent?(eventType: string, callback: (...args: any[]) => void): void;
