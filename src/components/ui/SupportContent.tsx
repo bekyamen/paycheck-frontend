@@ -280,7 +280,7 @@ export default function SupportContent({ onBack, showToast, isStandalonePage = f
           </div>
           <div>
             <div style={{ fontSize: "14px", fontWeight: 700, color: "#ffffff" }}>
-              Business Hours (Addis Ababa)
+              Business Hours (Ethiopia)
             </div>
             <div style={{ fontSize: "12.5px", color: "var(--tg-theme-hint-color, #8fa0b5)", marginTop: "2px" }}>
               {SUPPORT_CONFIG.workingDays}: {SUPPORT_CONFIG.workingHours}
