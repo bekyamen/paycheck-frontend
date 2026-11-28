@@ -4,25 +4,25 @@
  */
 
 export interface SupportConfig {
-  telegramUsername: string; // e.g. "YOUR_USERNAME"
+  telegramUsername: string; // e.g. "@bekyT"
   telegramUrl: string;
   phoneNumber: string; // E.164 tel: format
   phoneDisplay: string; // Human-readable format
   timezone: string; // Africa/Addis_Ababa
-  workingDays: string; // Mon - Sat
-  workingHours: string; // 8:00 AM - 6:00 PM EAT
+  workingDays: string; // Mon - Mon
+  workingHours: string; // 24 hours
   startHour: number; // 8 (08:00)
   endHour: number; // 18 (18:00)
 }
 
 export const SUPPORT_CONFIG: SupportConfig = {
-  telegramUsername: "YOUR_USERNAME",
-  telegramUrl: "https://t.me/YOUR_USERNAME",
-  phoneNumber: "+251XXXXXXXXX",
-  phoneDisplay: "+251XXXXXXXXX",
+  telegramUsername: "@bekyT",
+  telegramUrl: "https://t.me/bekyT",
+  phoneNumber: "+251940395625",
+  phoneDisplay: "+251940395625",
   timezone: "Africa/Addis_Ababa",
-  workingDays: "Mon - Sat",
-  workingHours: "8:00 AM - 6:00 PM EAT",
+  workingDays: "Mon - Mon",
+  workingHours: "24 hours",
   startHour: 8,
   endHour: 18,
 };
@@ -36,7 +36,7 @@ export interface OfficeHoursStatus {
 
 /**
  * Calculates whether the office is currently open based on Addis Ababa time (UTC+3).
- * Working hours: Mon-Sat 8:00 - 18:00 (Africa/Addis_Ababa).
+ * Working hours: Mon-Mon 24 hours (Africa/Addis_Ababa).
  */
 export function getAddisAbabaOfficeStatus(date: Date = new Date()): OfficeHoursStatus {
   try {
@@ -64,20 +64,24 @@ export function getAddisAbabaOfficeStatus(date: Date = new Date()): OfficeHoursS
     });
     const currentTimeString = timeFormatter.format(date);
 
-    const isWorkingDay = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].includes(weekday);
-    const isWorkingHour = timeDec >= SUPPORT_CONFIG.startHour && timeDec < SUPPORT_CONFIG.endHour;
-    const isOpen = isWorkingDay && isWorkingHour;
+    const is24Hours =
+      SUPPORT_CONFIG.workingHours.toLowerCase().includes("24") ||
+      SUPPORT_CONFIG.workingDays.toLowerCase().includes("mon - mon");
+
+    const isWorkingDay = is24Hours || ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].includes(weekday);
+    const isWorkingHour = is24Hours || (timeDec >= SUPPORT_CONFIG.startHour && timeDec < SUPPORT_CONFIG.endHour);
+    const isOpen = is24Hours || (isWorkingDay && isWorkingHour);
 
     if (isOpen) {
       return {
         isOpen: true,
-        badgeLabel: "🟢 Open Now",
-        detail: "Mon–Sat 8:00 AM – 6:00 PM EAT",
+        badgeLabel: is24Hours ? "🟢 Open 24/7" : "🟢 Open Now",
+        detail: `${SUPPORT_CONFIG.workingDays} • ${SUPPORT_CONFIG.workingHours}`,
         currentTimeString,
       };
     }
 
-    let detail = "Mon–Sat 8:00 AM – 6:00 PM EAT";
+    let detail = `${SUPPORT_CONFIG.workingDays} • ${SUPPORT_CONFIG.workingHours}`;
     if (isWorkingDay && timeDec < SUPPORT_CONFIG.startHour) {
       detail = "Opens today at 8:00 AM EAT";
     } else if (isWorkingDay && timeDec >= SUPPORT_CONFIG.endHour) {
@@ -95,8 +99,8 @@ export function getAddisAbabaOfficeStatus(date: Date = new Date()): OfficeHoursS
   } catch {
     return {
       isOpen: true,
-      badgeLabel: "🟢 Support Hours",
-      detail: "Mon–Sat 8:00 AM – 6:00 PM EAT",
+      badgeLabel: "🟢 Open 24/7",
+      detail: `${SUPPORT_CONFIG.workingDays} • ${SUPPORT_CONFIG.workingHours}`,
       currentTimeString: "",
     };
   }

@@ -94,26 +94,6 @@ const ALL_TABS: TabDef[] = [
     ),
   },
   {
-    id: "support",
-    label: "Support",
-    renderIcon: (active) => (
-      <svg
-        width="22"
-        height="22"
-        viewBox="0 0 24 24"
-        fill={active ? "rgba(56, 189, 248, 0.2)" : "none"}
-        stroke={active ? "#38bdf8" : "#64748b"}
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-        <line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="2.5" />
-      </svg>
-    ),
-  },
-  {
     id: "profile",
     label: "Profile",
     renderIcon: (active) => (
@@ -137,7 +117,7 @@ const ALL_TABS: TabDef[] = [
 export default function BottomNav({ active, onChange, isAdmin = true }: BottomNavProps) {
   const tabs = isAdmin
     ? ALL_TABS
-    : ALL_TABS.filter((t) => t.id === "verify" || t.id === "support" || t.id === "profile");
+    : ALL_TABS.filter((t) => t.id === "verify" || t.id === "profile");
 
   return (
     <nav
